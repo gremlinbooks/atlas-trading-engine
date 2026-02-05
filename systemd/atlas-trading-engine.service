@@ -1,0 +1,14 @@
+[Unit]
+Description=Atlas Trading Engine
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/trader/atlas-trading-engine
+EnvironmentFile=/home/trader/atlas-trading-engine/.env
+ExecStart=/home/trader/atlas-trading-engine/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
