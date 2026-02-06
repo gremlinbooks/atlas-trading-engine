@@ -7,7 +7,15 @@ from typing import Any, Optional
 from app.broker.oanda import OandaClient
 from app.config import get_settings
 from app.data.cursor import get_last_candle_ts, set_last_candle_ts
-from app.engine.strategy import evaluate_candles
+from app.engine.strategy_base import (
+    Candle,
+    PositionState,
+    StrategyConfig,
+    StrategyContext,
+    StrategyDecision,
+    StrategyState,
+    get_strategy,
+)
 from app.ledger.snapshots import insert_decision
 from app.ledger.trades import (
     get_position,
@@ -42,6 +50,57 @@ class Evaluator:
         self.error_state = error_state
         self._last_no_change_log: dict[str, str] = {}
         self._no_change_interval_seconds = _timeframe_to_seconds(self.settings.timeframe)
+        self.strategy = get_strategy(self.settings.strategy_name)
+        self.strategy_config = StrategyConfig(
+            timeframe=self.settings.timeframe,
+            min_hold_bars=self.settings.strategy_min_hold_bars,
+            trend_ema_period=self.settings.strategy_trend_ema_period,
+            enabled=self.settings.strategy_enabled,
+            fast_len=self.settings.strategy_fast_len,
+            slow_len=self.settings.strategy_slow_len,
+            use_bias=self.settings.strategy_use_bias,
+            invert_eurcad=self.settings.strategy_invert_eurcad,
+            force_flip=self.settings.strategy_force_flip,
+            tp1_pips=self.settings.strategy_tp1_pips,
+            sl_pips=self.settings.strategy_sl_pips,
+            tp1_close_pct=self.settings.strategy_tp1_close_pct,
+            trail_drawdown_pct=self.settings.strategy_trail_drawdown_pct,
+            be_lock_pips=self.settings.strategy_be_lock_pips,
+            stoch_entry_mode=self.settings.strategy_stoch_entry_mode,
+            use_stoch_exit=self.settings.strategy_use_stoch_exit,
+            st_rsi_len=self.settings.strategy_st_rsi_len,
+            st_stoch_len=self.settings.strategy_st_stoch_len,
+            st_k_len=self.settings.strategy_st_k_len,
+            st_d_len=self.settings.strategy_st_d_len,
+            st_ob=self.settings.strategy_st_ob,
+            st_os=self.settings.strategy_st_os,
+            st_recent=self.settings.strategy_st_recent,
+            st_tight_pips=self.settings.strategy_st_tight_pips,
+            block_trades=self.settings.strategy_block_trades,
+            block_session=self.settings.strategy_block_session,
+            quick_relax=self.settings.strategy_quick_relax,
+            use_day_mask=self.settings.strategy_use_day_mask,
+            block_mon=self.settings.strategy_block_mon,
+            block_tue=self.settings.strategy_block_tue,
+            block_wed=self.settings.strategy_block_wed,
+            block_thu=self.settings.strategy_block_thu,
+            block_fri=self.settings.strategy_block_fri,
+            block_sat=self.settings.strategy_block_sat,
+            block_sun=self.settings.strategy_block_sun,
+            use_spread_gate=self.settings.strategy_use_spread_gate,
+            max_spread_pips=self.settings.strategy_max_spread_pips,
+            aggr_spread_factor=self.settings.strategy_aggr_spread_factor,
+            hold_signal_bars=self.settings.strategy_hold_signal_bars,
+            apply_on_history=self.settings.strategy_apply_on_history,
+            pb_enabled=self.settings.strategy_pb_enabled,
+            pb_lookback_bars=self.settings.strategy_pb_lookback_bars,
+            cont_enabled=self.settings.strategy_cont_enabled,
+            base_max_bars=self.settings.strategy_base_max_bars,
+            base_max_range_atr=self.settings.strategy_base_max_range_atr,
+            allow_second_chance=self.settings.strategy_allow_second_chance,
+            reenter_within_bars=self.settings.strategy_reenter_within_bars,
+        )
+        self.strategy_state: dict[str, StrategyState] = {}
 
     async def run_loop(self) -> None:
         while True:
@@ -99,13 +158,27 @@ class Evaluator:
             self._maybe_log_no_change(symbol, latest_ts)
             return
 
-        signal, reason, metadata = evaluate_candles(candles)
+        candle_objs = [
+            Candle(
+                ts=c["time"],
+                o=float(c["o"]),
+                h=float(c["h"]),
+                l=float(c["l"]),
+                c=float(c["c"]),
+                volume=int(c["volume"]),
+            )
+            for c in candles
+        ]
         position = get_position(symbol)
         position_side = position["side"] if position and position["side"] else None
         position_units = position["units"] if position and position["units"] else 0
         position_trade_id = position["oanda_trade_id"] if position else None
+        state = self.strategy_state.get(symbol, StrategyState())
+        position_entry_ts = state.last_trade_candle_ts or (position["updated_at"] if position else None)
+        position_avg_price = position["avg_price"] if position else 0.0
 
-        spread_pips = 0.0
+        spread_pips: float | None = None
+        spread_available = False
         if pricing_available:
             price = price_map.get(symbol)
             if price:
@@ -115,20 +188,41 @@ class Evaluator:
                     bid = float(bids[0]["price"])
                     ask = float(asks[0]["price"])
                     spread_pips = _calc_spread_pips(bid, ask, symbol)
-                    metadata["bid"] = bid
-                    metadata["ask"] = ask
-        elif not self.settings.dry_run:
-            spread_pips = self.settings.max_spread_pips + 1
+                    spread_available = True
+        decision = self.strategy.evaluate(
+            candle_objs,
+            StrategyContext(
+                symbol=symbol,
+                timeframe=self.settings.timeframe,
+                position=PositionState(
+                    side=position_side,
+                    units=position_units,
+                    avg_price=position_avg_price,
+                    entry_ts=position_entry_ts,
+                ),
+                config=self.strategy_config,
+                state=state,
+                bar_index=len(candle_objs) - 1,
+                spread_pips=spread_pips,
+                spread_available=spread_available,
+                is_realtime=True,
+            ),
+        )
+        signal, reason, metadata = self._map_strategy_signal(decision)
+        if spread_available:
+            metadata["bid"] = bid
+            metadata["ask"] = ask
+        if spread_pips is None and not self.settings.dry_run:
             metadata["spread_unavailable"] = True
 
-        state = get_state(
+        computed_state = get_state(
             symbol=symbol,
-            spread_pips=spread_pips,
+            spread_pips=spread_pips if spread_pips is not None else 0.0,
             position_side=position_side,
             error_halt=self.error_state.get("halted", False),
         )
 
-        action = self._decide_action(signal, position_side)
+        action = self._map_execution_action(decision.action)
         if self.error_state.get("halted", False) and action in {"ENTER", "FLIP"}:
             action = "HALTED"
 
@@ -138,6 +232,7 @@ class Evaluator:
             signal=signal,
             action=action,
             position_trade_id=position_trade_id,
+            decision=decision,
         )
 
         candle_metadata = {
@@ -152,7 +247,7 @@ class Evaluator:
 
         insert_decision(
             symbol=symbol,
-            state=state,
+            state=computed_state,
             spread_pips=spread_pips,
             candle_ts=latest_ts,
             signal=signal,
@@ -174,7 +269,7 @@ class Evaluator:
             timeframe=self.settings.timeframe,
             signal=signal,
             reason=reason,
-            state=state,
+            state=computed_state,
             action=action,
             current_position_side=position_side,
             current_units=position_units,
@@ -188,15 +283,36 @@ class Evaluator:
         )
 
         set_last_candle_ts(symbol, latest_ts)
+        if decision.next_state is not None:
+            self.strategy_state[symbol] = decision.next_state
 
-    def _decide_action(self, signal: str, position_side: Optional[str]) -> str:
-        if signal == "HOLD":
+    def _map_strategy_signal(self, decision: StrategyDecision) -> tuple[str, str, dict[str, Any]]:
+        action = decision.action
+        reason = decision.reason
+        metadata = dict(decision.metadata)
+
+        if action in {"ENTER_LONG", "FLIP_LONG"}:
+            return "LONG", reason, metadata
+        if action in {"ENTER_SHORT", "FLIP_SHORT"}:
+            return "SHORT", reason, metadata
+        if action == "EXIT":
+            return "EXIT", reason, metadata
+        if action == "PARTIAL_TP1":
+            return "TP1", reason, metadata
+        return "HOLD", reason, metadata
+
+    def _map_execution_action(self, action: str) -> str:
+        if action == "HOLD":
             return "HOLD"
-        if not position_side:
+        if action == "PARTIAL_TP1":
+            return "WOULD_PARTIAL_TP1" if self.settings.dry_run else "PARTIAL_TP1"
+        if action == "EXIT":
+            return "WOULD_EXIT" if self.settings.dry_run else "EXIT"
+        if action in {"ENTER_LONG", "ENTER_SHORT"}:
             return "WOULD_ENTER" if self.settings.dry_run else "ENTER"
-        if position_side == signal:
-            return "HOLD"
-        return "WOULD_FLIP" if self.settings.dry_run else "FLIP"
+        if action in {"FLIP_LONG", "FLIP_SHORT"}:
+            return "WOULD_FLIP" if self.settings.dry_run else "FLIP"
+        return "HOLD"
 
     def _maybe_execute(
         self,
@@ -206,10 +322,20 @@ class Evaluator:
         signal: str,
         action: str,
         position_trade_id: Optional[str],
+        decision: StrategyDecision,
     ) -> str:
         if self.settings.dry_run:
             return action
-        if action not in {"ENTER", "FLIP"}:
+        if action == "PARTIAL_TP1":
+            log_event(
+                execution_logger,
+                "partial_tp1_unsupported",
+                symbol=symbol,
+                candle_ts=candle_ts,
+                price=decision.price,
+            )
+            return "PARTIAL_UNSUPPORTED"
+        if action not in {"ENTER", "FLIP", "EXIT"}:
             return action
 
         idempotency_key = f"{symbol}:{candle_ts}"
@@ -221,8 +347,8 @@ class Evaluator:
         insert_trade_intent(
             intent_id=intent_id,
             symbol=symbol,
-            side=signal,
-            units=float(self.settings.default_units),
+            side=signal if signal in {"LONG", "SHORT"} else "EXIT",
+            units=float(self.settings.default_units) if signal in {"LONG", "SHORT"} else 0.0,
             status="PENDING",
             idempotency_key=idempotency_key,
             reason="strategy signal",
@@ -241,8 +367,19 @@ class Evaluator:
                     )
                     return "EXECUTION_FAILED"
                 client.close_trade(position_trade_id)
-            units = self.settings.default_units if signal == "LONG" else -abs(self.settings.default_units)
-            response = client.place_market_order(symbol, units)
+            if action == "EXIT":
+                if not position_trade_id:
+                    log_event(
+                        execution_logger,
+                        "exit_missing_trade_id",
+                        symbol=symbol,
+                        candle_ts=candle_ts,
+                    )
+                    return "EXECUTION_FAILED"
+                response = client.close_trade(position_trade_id)
+            else:
+                units = self.settings.default_units if signal == "LONG" else -abs(self.settings.default_units)
+                response = client.place_market_order(symbol, units)
         except Exception as exc:  # noqa: BLE001
             update_trade_intent(
                 intent_id=intent_id,
@@ -295,6 +432,15 @@ class Evaluator:
             timeframe=self.settings.timeframe,
             last_seen_candle_ts=last_seen_candle_ts,
         )
+
+    def update_strategy_config(self, **updates: Any) -> None:
+        for key, value in updates.items():
+            if value is None:
+                continue
+            if hasattr(self.strategy_config, key):
+                setattr(self.strategy_config, key, value)
+        if "strategy_name" in updates and updates["strategy_name"] is not None:
+            self.strategy = get_strategy(updates["strategy_name"])
 
 
 def _timeframe_to_seconds(timeframe: str) -> int:

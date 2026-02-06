@@ -1,0 +1,35 @@
+{
+  "params": {
+    "symbol": "AUD_USD",
+    "timeframe": "M15",
+    "from": "2026-01-27",
+    "to": "2026-02-06",
+    "days": 10,
+    "units": 1000,
+    "spread_pips": 0.0,
+    "fill": "next_open",
+    "tp1_pips": 20,
+    "sl_pips": 28,
+    "tp1_close_pct": 30,
+    "trail_drawdown_pct": 2.0,
+    "be_lock_pips": 20,
+    "bar_fill_policy": "conservative",
+    "use_runner": true,
+    "use_stoch_exit": false,
+    "st_tight_pips": 6
+  },
+  "metrics": {
+    "total_trades": 236.0,
+    "win_rate": 44.49152542372881,
+    "avg_win": 0.7615238095238077,
+    "avg_loss": -0.5706923076923083,
+    "profit_factor": 1.0777732848092698,
+    "total_pnl_pips": 57.69999999999715,
+    "total_pnl_usd": 5.76999999999972,
+    "max_drawdown_pips": 87.3000000000035,
+    "sharpe": 0.46517866099985145,
+    "avg_hold_bars": 2.8829268292682926,
+    "tp1_hit_pct": 15.121951219512194,
+    "runner_pnl_usd": 43.40000000000003
+  }
+}

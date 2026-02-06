@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from app.broker.oanda import OandaClient
 from app.config import get_settings
+from app.api.health import SchedulerSingleton
 from app.ledger.trades import (
     get_trade_intent_by_idempotency,
     insert_trade_intent,
@@ -31,6 +32,14 @@ class ExecuteResponse(BaseModel):
     status: str
     oanda_order_id: Optional[str] = None
     oanda_trade_id: Optional[str] = None
+
+
+class StrategyUpdateRequest(BaseModel):
+    strategy_name: Optional[str] = None
+    strategy_enabled: Optional[bool] = None
+    strategy_min_hold_bars: Optional[int] = None
+    strategy_trend_ema_period: Optional[int] = None
+    params: Optional[dict] = None
 
 
 @router.post("/api/v1/execute", response_model=ExecuteResponse)
@@ -110,3 +119,12 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
         oanda_order_id=order_id,
         oanda_trade_id=trade_id,
     )
+
+
+@router.post("/api/v1/strategy")
+async def update_strategy(req: StrategyUpdateRequest) -> dict:
+    scheduler = SchedulerSingleton.instance
+    payload = req.model_dump(exclude_none=True)
+    params = payload.pop("params", None) or {}
+    scheduler.evaluator.update_strategy_config(**payload, **params)
+    return {"status": "ok", "updated": {**payload, **params}}

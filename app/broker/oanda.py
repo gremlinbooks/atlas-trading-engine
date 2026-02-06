@@ -115,21 +115,24 @@ class OandaClient:
         granularity: str,
         from_ts: str,
         to_ts: str,
-        count: int = 5000,
+        count: int | None = 5000,
         include_first: bool = True,
     ) -> List[Dict[str, Any]]:
         url = f"{self.base_url}/v3/instruments/{symbol}/candles"
+        params = {
+            "price": "M",
+            "granularity": granularity,
+            "from": from_ts,
+            "to": to_ts,
+            "includeFirst": "true" if include_first else "false",
+        }
+        if not (from_ts and to_ts):
+            if count is not None:
+                params["count"] = count
         resp = requests.get(
             url,
             headers=self._headers(),
-            params={
-                "price": "M",
-                "granularity": granularity,
-                "from": from_ts,
-                "to": to_ts,
-                "count": count,
-                "includeFirst": "true" if include_first else "false",
-            },
+            params=params,
             timeout=20,
         )
         resp.raise_for_status()
