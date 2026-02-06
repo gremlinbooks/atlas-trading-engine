@@ -107,3 +107,47 @@ class OandaClient:
                 }
             )
         return normalized
+
+    def get_candles_range(
+        self,
+        *,
+        symbol: str,
+        granularity: str,
+        from_ts: str,
+        to_ts: str,
+        count: int = 5000,
+        include_first: bool = True,
+    ) -> List[Dict[str, Any]]:
+        url = f"{self.base_url}/v3/instruments/{symbol}/candles"
+        resp = requests.get(
+            url,
+            headers=self._headers(),
+            params={
+                "price": "M",
+                "granularity": granularity,
+                "from": from_ts,
+                "to": to_ts,
+                "count": count,
+                "includeFirst": "true" if include_first else "false",
+            },
+            timeout=20,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        candles = payload.get("candles", [])
+        normalized: List[Dict[str, Any]] = []
+        for candle in candles:
+            if not candle.get("complete", False):
+                continue
+            mid = candle.get("mid", {})
+            normalized.append(
+                {
+                    "time": candle.get("time"),
+                    "o": float(mid.get("o", 0)),
+                    "h": float(mid.get("h", 0)),
+                    "l": float(mid.get("l", 0)),
+                    "c": float(mid.get("c", 0)),
+                    "volume": int(candle.get("volume", 0)),
+                }
+            )
+        return normalized

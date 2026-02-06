@@ -40,6 +40,8 @@ class Evaluator:
         self.settings = get_settings()
         self.client: Optional[OandaClient] = None
         self.error_state = error_state
+        self._last_no_change_log: dict[str, str] = {}
+        self._no_change_interval_seconds = _timeframe_to_seconds(self.settings.timeframe)
 
     async def run_loop(self) -> None:
         while True:
@@ -81,20 +83,20 @@ class Evaluator:
             candles = self._get_candles(symbol)
         except Exception as exc:  # noqa: BLE001
             log_event(system_logger, "candle_fetch_failed", symbol=symbol, error=str(exc))
-            self._log_hold_decision(symbol, None, "candle fetch failed", {"error": str(exc)})
             return
         if len(candles) < 2:
-            self._log_hold_decision(symbol, None, "insufficient candles", {})
+            log_event(system_logger, "candle_insufficient", symbol=symbol, count=len(candles))
             return
 
         latest_candle = candles[-1]
         latest_ts = latest_candle.get("time")
         if not latest_ts:
-            self._log_hold_decision(symbol, None, "latest candle missing time", {})
+            log_event(system_logger, "candle_missing_time", symbol=symbol)
             return
 
         last_processed = get_last_candle_ts(symbol)
-        if last_processed == latest_ts:
+        if last_processed and latest_ts <= last_processed:
+            self._maybe_log_no_change(symbol, latest_ts)
             return
 
         signal, reason, metadata = evaluate_candles(candles)
@@ -278,39 +280,49 @@ class Evaluator:
         client = self._get_client()
         return client.get_candles(symbol, self.settings.timeframe, self.settings.candle_count)
 
-    def _log_hold_decision(
-        self,
-        symbol: str,
-        candle_ts: Optional[str],
-        reason: str,
-        metadata: dict[str, Any],
-    ) -> None:
-        insert_decision(
-            symbol=symbol,
-            state="HUNTING",
-            spread_pips=0.0,
-            candle_ts=candle_ts or _now_ts(),
-            signal="HOLD",
-            reason=reason,
-            metadata={
-                **metadata,
-                "timeframe": self.settings.timeframe,
-                "action": "HOLD",
-                "current_position_side": None,
-                "current_units": 0,
-            },
-        )
+    def _maybe_log_no_change(self, symbol: str, last_seen_candle_ts: str) -> None:
+        last_log_ts = self._last_no_change_log.get(symbol)
+        if last_log_ts:
+            elapsed = _iso_to_epoch_seconds(_now_ts()) - _iso_to_epoch_seconds(last_log_ts)
+            if elapsed < self._no_change_interval_seconds:
+                return
+        self._last_no_change_log[symbol] = _now_ts()
         log_event(
-            decision_logger,
-            "decision",
+            system_logger,
+            "candle_no_change",
+            event="candle_no_change",
             symbol=symbol,
-            candle_ts=candle_ts or _now_ts(),
             timeframe=self.settings.timeframe,
-            signal="HOLD",
-            reason=reason,
-            state="HUNTING",
-            action="HOLD",
-            current_position_side=None,
-            current_units=0,
-            metadata=metadata,
+            last_seen_candle_ts=last_seen_candle_ts,
         )
+
+
+def _timeframe_to_seconds(timeframe: str) -> int:
+    mapping = {
+        "S5": 5,
+        "S10": 10,
+        "S15": 15,
+        "S30": 30,
+        "M1": 60,
+        "M2": 120,
+        "M4": 240,
+        "M5": 300,
+        "M10": 600,
+        "M15": 900,
+        "M30": 1800,
+        "H1": 3600,
+        "H2": 7200,
+        "H3": 10800,
+        "H4": 14400,
+        "H6": 21600,
+        "H8": 28800,
+        "H12": 43200,
+        "D": 86400,
+        "W": 604800,
+        "M": 2592000,
+    }
+    return mapping.get(timeframe.upper(), 900)
+
+
+def _iso_to_epoch_seconds(ts: str) -> float:
+    return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()

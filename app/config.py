@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     candle_count: int = Field(default=200, alias="CANDLE_COUNT")
     candle_poll_seconds: int = Field(default=30, alias="CANDLE_POLL_SECONDS")
     default_units: int = Field(default=1000, alias="DEFAULT_UNITS")
+    force_signal: Optional[str] = Field(default=None, alias="FORCE_SIGNAL")
 
     dry_run: bool = Field(default=True, alias="DRY_RUN")
     off_hours_enabled: bool = Field(default=False, alias="OFF_HOURS_ENABLED")
@@ -34,6 +35,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_oanda(self) -> "Settings":
+        if self.force_signal:
+            forced = self.force_signal.upper()
+            if forced not in {"LONG", "SHORT", "HOLD"}:
+                raise ValueError("FORCE_SIGNAL must be LONG, SHORT, HOLD, or empty")
         if self.dry_run:
             return self
         if not self.oanda_api_key or not self.oanda_account_id or not self.oanda_env:

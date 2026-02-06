@@ -65,3 +65,15 @@ curl -X POST http://localhost:8000/api/v1/execute \
 
 - Use `python -m venv .venv` and activate with `.venv\\Scripts\\activate`.
 - Run uvicorn the same way after activating the venv.
+
+## How To Run Backtests
+
+Backtests use OANDA candles and the current strategy logic. Example:
+
+```bash
+python -m app.backtest.run --symbol AUD_USD --timeframe M15 --days 90 --units 1000 --spread_pips 1.2
+```
+
+Optional fill model:
+- `--fill=next_open` (default)
+- `--fill=close`
