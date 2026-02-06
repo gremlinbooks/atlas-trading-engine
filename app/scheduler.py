@@ -18,11 +18,12 @@ snapshot_logger = get_logger("snapshot", "logs/snapshot.jsonl")
 class Scheduler:
     def __init__(self) -> None:
         self.settings = get_settings()
-        self.client = OandaClient()
+        self.client = None if self.settings.dry_run else OandaClient()
         self.error_state: Dict[str, Any] = {
             "halted": False,
             "evaluator_failures": 0,
             "snapshot_failures": 0,
+            "snapshot_degraded": False,
             "last_evaluator_run": None,
             "last_snapshot_run": None,
         }
@@ -38,7 +39,24 @@ class Scheduler:
             await asyncio.sleep(self.settings.snapshot_seconds)
 
     async def snapshot_once(self) -> None:
+        if self.settings.dry_run:
+            insert_snapshot(
+                balance=0.0,
+                nav=0.0,
+                margin_used=0.0,
+                unrealized_pl=0.0,
+                open_trades=[],
+            )
+            self._reconcile_positions([])
+            log_event(snapshot_logger, "snapshot_dry_run")
+            self.error_state["snapshot_failures"] = 0
+            self.error_state["snapshot_degraded"] = False
+            self.error_state["last_snapshot_run"] = datetime.now(timezone.utc).isoformat()
+            return
+
         try:
+            if self.client is None:
+                self.client = OandaClient()
             summary = self.client.get_account_summary().get("account", {})
             open_trades = self.client.list_open_trades().get("trades", [])
 
@@ -53,13 +71,14 @@ class Scheduler:
             self._reconcile_positions(open_trades)
 
             self.error_state["snapshot_failures"] = 0
+            self.error_state["snapshot_degraded"] = False
             self.error_state["last_snapshot_run"] = datetime.now(timezone.utc).isoformat()
         except Exception as exc:  # noqa: BLE001
             failures = self.error_state.get("snapshot_failures", 0) + 1
             self.error_state["snapshot_failures"] = failures
-            log_event(system_logger, "snapshot_failure", error=str(exc), failures=failures)
             if failures >= 3:
-                self.error_state["halted"] = True
+                self.error_state["snapshot_degraded"] = True
+            log_event(system_logger, "snapshot_failure", error=str(exc), failures=failures)
 
     def _reconcile_positions(self, open_trades: list[dict[str, Any]]) -> None:
         broker_positions: Dict[str, dict[str, Any]] = {}

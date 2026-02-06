@@ -9,14 +9,14 @@ from typing import Any, Dict
 
 class JsonLineFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
+        fields = getattr(record, "fields", {})
         payload: Dict[str, Any] = {
             "ts": datetime.now(timezone.utc).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
+            "fields": fields,
         }
-        if isinstance(record.args, dict):
-            payload.update(record.args)
         return json.dumps(payload, ensure_ascii=True)
 
 
@@ -36,4 +36,4 @@ def get_logger(name: str, path: str) -> logging.Logger:
 
 
 def log_event(logger: logging.Logger, message: str, **fields: Any) -> None:
-    logger.info(message, fields)
+    logger.info(message, extra={"fields": fields})

@@ -52,7 +52,7 @@ curl -X POST http://localhost:8000/api/v1/execute \
 
 ## DRY_RUN Usage
 
-- `DRY_RUN=true`: records trade intent only, no broker calls
+- `DRY_RUN=true`: no broker calls, decisions and snapshots still write to the DB and logs
 - `DRY_RUN=false`: executes via OANDA and enforces idempotency
 
 ## Windows Notes

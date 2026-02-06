@@ -3,15 +3,16 @@ from __future__ import annotations
 from typing import List, Optional
 
 from pydantic import Field
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
-    oanda_api_key: str = Field(alias="OANDA_API_KEY")
-    oanda_account_id: str = Field(alias="OANDA_ACCOUNT_ID")
-    oanda_env: str = Field(alias="OANDA_ENV")
+    oanda_api_key: str = Field(default="", alias="OANDA_API_KEY")
+    oanda_account_id: str = Field(default="", alias="OANDA_ACCOUNT_ID")
+    oanda_env: str = Field(default="", alias="OANDA_ENV")
 
     symbols: str = Field(default="AUD_USD", alias="SYMBOLS")
     loop_seconds: int = Field(default=60, alias="LOOP_SECONDS")
@@ -26,6 +27,16 @@ class Settings(BaseSettings):
     @property
     def symbols_list(self) -> List[str]:
         return [s.strip() for s in self.symbols.split(",") if s.strip()]
+
+    @model_validator(mode="after")
+    def _validate_oanda(self) -> "Settings":
+        if self.dry_run:
+            return self
+        if not self.oanda_api_key or not self.oanda_account_id or not self.oanda_env:
+            raise ValueError("OANDA credentials must be set when DRY_RUN=false")
+        if self.oanda_env not in {"practice", "live"}:
+            raise ValueError("OANDA_ENV must be practice or live")
+        return self
 
 
 def get_settings() -> Settings:

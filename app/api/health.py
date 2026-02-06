@@ -19,6 +19,9 @@ async def health() -> dict:
         "symbols": settings.symbols_list,
         "dry_run": settings.dry_run,
         "halted": scheduler.error_state.get("halted", False),
+        "snapshot_failures": scheduler.error_state.get("snapshot_failures", 0),
+        "evaluator_failures": scheduler.error_state.get("evaluator_failures", 0),
+        "snapshot_degraded": scheduler.error_state.get("snapshot_degraded", False),
     }
 
 
