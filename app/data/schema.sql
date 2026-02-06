@@ -43,3 +43,9 @@ CREATE TABLE IF NOT EXISTS decisions (
     reason TEXT,
     metadata_json TEXT
 );
+
+CREATE TABLE IF NOT EXISTS candle_cursor (
+    symbol TEXT PRIMARY KEY,
+    last_candle_ts TEXT,
+    updated_at TEXT
+);

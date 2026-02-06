@@ -25,6 +25,12 @@ cp .env.example .env
 
 Update `OANDA_API_KEY`, `OANDA_ACCOUNT_ID`, and `OANDA_ENV`.
 
+Phase 2 candle settings (defaults shown in `.env.example`):
+- `TIMEFRAME` (default `M15`)
+- `CANDLE_COUNT` (default `200`)
+- `CANDLE_POLL_SECONDS` (default `30`)
+- `DEFAULT_UNITS` (default `1000`)
+
 ## Running Locally
 
 ```bash
@@ -52,7 +58,7 @@ curl -X POST http://localhost:8000/api/v1/execute \
 
 ## DRY_RUN Usage
 
-- `DRY_RUN=true`: no broker calls, decisions and snapshots still write to the DB and logs
+- `DRY_RUN=true`: no order execution; decisions and snapshots still write to the DB and logs
 - `DRY_RUN=false`: executes via OANDA and enforces idempotency
 
 ## Windows Notes

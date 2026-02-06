@@ -75,3 +75,35 @@ class OandaClient:
         resp = requests.put(url, headers=self._headers(), timeout=20)
         resp.raise_for_status()
         return resp.json()
+
+    def get_candles(self, symbol: str, granularity: str, count: int) -> List[Dict[str, Any]]:
+        url = f"{self.base_url}/v3/instruments/{symbol}/candles"
+        resp = requests.get(
+            url,
+            headers=self._headers(),
+            params={
+                "price": "M",
+                "granularity": granularity,
+                "count": count,
+            },
+            timeout=20,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        candles = payload.get("candles", [])
+        normalized: List[Dict[str, Any]] = []
+        for candle in candles:
+            if not candle.get("complete", False):
+                continue
+            mid = candle.get("mid", {})
+            normalized.append(
+                {
+                    "time": candle.get("time"),
+                    "o": float(mid.get("o", 0)),
+                    "h": float(mid.get("h", 0)),
+                    "l": float(mid.get("l", 0)),
+                    "c": float(mid.get("c", 0)),
+                    "volume": int(candle.get("volume", 0)),
+                }
+            )
+        return normalized

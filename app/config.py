@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     loop_seconds: int = Field(default=60, alias="LOOP_SECONDS")
     snapshot_seconds: int = Field(default=300, alias="SNAPSHOT_SECONDS")
     max_spread_pips: float = Field(default=2.0, alias="MAX_SPREAD_PIPS")
+    timeframe: str = Field(default="M15", alias="TIMEFRAME")
+    candle_count: int = Field(default=200, alias="CANDLE_COUNT")
+    candle_poll_seconds: int = Field(default=30, alias="CANDLE_POLL_SECONDS")
+    default_units: int = Field(default=1000, alias="DEFAULT_UNITS")
 
     dry_run: bool = Field(default=True, alias="DRY_RUN")
     off_hours_enabled: bool = Field(default=False, alias="OFF_HOURS_ENABLED")

@@ -2,17 +2,25 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 from app.broker.oanda import OandaClient
 from app.config import get_settings
+from app.data.cursor import get_last_candle_ts, set_last_candle_ts
+from app.engine.strategy import evaluate_candles
 from app.ledger.snapshots import insert_decision
-from app.ledger.trades import get_position
+from app.ledger.trades import (
+    get_position,
+    get_trade_intent_by_idempotency,
+    insert_trade_intent,
+    update_trade_intent,
+)
 from app.logging.logger import get_logger, log_event
 from app.state_machine import get_state
 
 system_logger = get_logger("system", "logs/system.jsonl")
 decision_logger = get_logger("decision", "logs/decision.jsonl")
+execution_logger = get_logger("execution", "logs/execution.jsonl")
 
 
 def _pip_factor(symbol: str) -> float:
@@ -23,40 +31,80 @@ def _calc_spread_pips(bid: float, ask: float, symbol: str) -> float:
     return (ask - bid) / _pip_factor(symbol)
 
 
+def _now_ts() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 class Evaluator:
     def __init__(self, error_state: dict[str, Any]) -> None:
         self.settings = get_settings()
-        self.client = None if self.settings.dry_run else OandaClient()
+        self.client: Optional[OandaClient] = None
         self.error_state = error_state
 
     async def run_loop(self) -> None:
         while True:
             await self.run_once()
-            await asyncio.sleep(self.settings.loop_seconds)
+            await asyncio.sleep(self.settings.candle_poll_seconds)
 
     async def run_once(self) -> None:
-        pricing_error = None
+        pricing_available = False
         price_map: dict[str, Any] = {}
+
         if not self.settings.dry_run:
             try:
-                if self.client is None:
-                    self.client = OandaClient()
-                pricing = self.client.get_pricing(self.settings.symbols_list)
+                client = self._get_client()
+                pricing = client.get_pricing(self.settings.symbols_list)
                 prices = pricing.get("prices", [])
                 price_map = {p["instrument"]: p for p in prices}
+                pricing_available = True
+                self.error_state["evaluator_failures"] = 0
             except Exception as exc:  # noqa: BLE001
-                pricing_error = str(exc)
                 failures = self.error_state.get("evaluator_failures", 0) + 1
                 self.error_state["evaluator_failures"] = failures
-                log_event(system_logger, "evaluator_failure", error=pricing_error, failures=failures)
-        else:
-            self.error_state["evaluator_failures"] = 0
+                log_event(system_logger, "evaluator_pricing_failure", error=str(exc), failures=failures)
 
         for symbol in self.settings.symbols_list:
-            bid = None
-            ask = None
-            spread_pips = 0.0
+            try:
+                await self._process_symbol(symbol, price_map, pricing_available)
+            except Exception as exc:  # noqa: BLE001
+                log_event(system_logger, "evaluator_symbol_failure", symbol=symbol, error=str(exc))
 
+        self.error_state["last_evaluator_run"] = _now_ts()
+
+    async def _process_symbol(
+        self,
+        symbol: str,
+        price_map: dict[str, Any],
+        pricing_available: bool,
+    ) -> None:
+        try:
+            candles = self._get_candles(symbol)
+        except Exception as exc:  # noqa: BLE001
+            log_event(system_logger, "candle_fetch_failed", symbol=symbol, error=str(exc))
+            self._log_hold_decision(symbol, None, "candle fetch failed", {"error": str(exc)})
+            return
+        if len(candles) < 2:
+            self._log_hold_decision(symbol, None, "insufficient candles", {})
+            return
+
+        latest_candle = candles[-1]
+        latest_ts = latest_candle.get("time")
+        if not latest_ts:
+            self._log_hold_decision(symbol, None, "latest candle missing time", {})
+            return
+
+        last_processed = get_last_candle_ts(symbol)
+        if last_processed == latest_ts:
+            return
+
+        signal, reason, metadata = evaluate_candles(candles)
+        position = get_position(symbol)
+        position_side = position["side"] if position and position["side"] else None
+        position_units = position["units"] if position and position["units"] else 0
+        position_trade_id = position["oanda_trade_id"] if position else None
+
+        spread_pips = 0.0
+        if pricing_available:
             price = price_map.get(symbol)
             if price:
                 bids = price.get("bids", [])
@@ -65,40 +113,204 @@ class Evaluator:
                     bid = float(bids[0]["price"])
                     ask = float(asks[0]["price"])
                     spread_pips = _calc_spread_pips(bid, ask, symbol)
+                    metadata["bid"] = bid
+                    metadata["ask"] = ask
+        elif not self.settings.dry_run:
+            spread_pips = self.settings.max_spread_pips + 1
+            metadata["spread_unavailable"] = True
 
-            position = get_position(symbol)
-            position_side = position["side"] if position and position["side"] else None
-            state = get_state(
-                symbol=symbol,
-                spread_pips=spread_pips,
-                position_side=position_side,
-                error_halt=self.error_state.get("halted", False),
+        state = get_state(
+            symbol=symbol,
+            spread_pips=spread_pips,
+            position_side=position_side,
+            error_halt=self.error_state.get("halted", False),
+        )
+
+        action = self._decide_action(signal, position_side)
+        if self.error_state.get("halted", False) and action in {"ENTER", "FLIP"}:
+            action = "HALTED"
+
+        action = self._maybe_execute(
+            symbol=symbol,
+            candle_ts=latest_ts,
+            signal=signal,
+            action=action,
+            position_trade_id=position_trade_id,
+        )
+
+        candle_metadata = {
+            "time": latest_candle.get("time"),
+            "o": latest_candle.get("o"),
+            "h": latest_candle.get("h"),
+            "l": latest_candle.get("l"),
+            "c": latest_candle.get("c"),
+            "volume": latest_candle.get("volume"),
+        }
+        metadata.update({"latest_candle": candle_metadata})
+
+        insert_decision(
+            symbol=symbol,
+            state=state,
+            spread_pips=spread_pips,
+            candle_ts=latest_ts,
+            signal=signal,
+            reason=reason,
+            metadata={
+                **metadata,
+                "timeframe": self.settings.timeframe,
+                "action": action,
+                "current_position_side": position_side,
+                "current_units": position_units,
+            },
+        )
+
+        log_event(
+            decision_logger,
+            "decision",
+            symbol=symbol,
+            candle_ts=latest_ts,
+            timeframe=self.settings.timeframe,
+            signal=signal,
+            reason=reason,
+            state=state,
+            action=action,
+            current_position_side=position_side,
+            current_units=position_units,
+            metadata={
+                **metadata,
+                "timeframe": self.settings.timeframe,
+                "action": action,
+                "current_position_side": position_side,
+                "current_units": position_units,
+            },
+        )
+
+        set_last_candle_ts(symbol, latest_ts)
+
+    def _decide_action(self, signal: str, position_side: Optional[str]) -> str:
+        if signal == "HOLD":
+            return "HOLD"
+        if not position_side:
+            return "WOULD_ENTER" if self.settings.dry_run else "ENTER"
+        if position_side == signal:
+            return "HOLD"
+        return "WOULD_FLIP" if self.settings.dry_run else "FLIP"
+
+    def _maybe_execute(
+        self,
+        *,
+        symbol: str,
+        candle_ts: str,
+        signal: str,
+        action: str,
+        position_trade_id: Optional[str],
+    ) -> str:
+        if self.settings.dry_run:
+            return action
+        if action not in {"ENTER", "FLIP"}:
+            return action
+
+        idempotency_key = f"{symbol}:{candle_ts}"
+        existing = get_trade_intent_by_idempotency(idempotency_key)
+        if existing:
+            return "ALREADY_EXECUTED"
+
+        intent_id = f"{symbol}-{candle_ts}"
+        insert_trade_intent(
+            intent_id=intent_id,
+            symbol=symbol,
+            side=signal,
+            units=float(self.settings.default_units),
+            status="PENDING",
+            idempotency_key=idempotency_key,
+            reason="strategy signal",
+            requested={"symbol": symbol, "signal": signal, "candle_ts": candle_ts},
+        )
+
+        client = self._get_client()
+        try:
+            if action == "FLIP":
+                if not position_trade_id:
+                    log_event(
+                        execution_logger,
+                        "flip_missing_trade_id",
+                        symbol=symbol,
+                        candle_ts=candle_ts,
+                    )
+                    return "EXECUTION_FAILED"
+                client.close_trade(position_trade_id)
+            units = self.settings.default_units if signal == "LONG" else -abs(self.settings.default_units)
+            response = client.place_market_order(symbol, units)
+        except Exception as exc:  # noqa: BLE001
+            update_trade_intent(
+                intent_id=intent_id,
+                status="FAILED",
+                response={"error": str(exc)},
             )
+            log_event(execution_logger, "execution_failed", symbol=symbol, error=str(exc))
+            return "EXECUTION_FAILED"
 
-            metadata: dict[str, Any] = {"bid": bid, "ask": ask}
-            if pricing_error:
-                metadata["pricing_error"] = pricing_error
-            if self.settings.dry_run:
-                metadata["pricing"] = "dry_run"
+        order_id = response.get("orderCreateTransaction", {}).get("id")
+        trade_id = response.get("orderFillTransaction", {}).get("tradeOpened", {}).get("tradeID")
+        update_trade_intent(
+            intent_id=intent_id,
+            status="SUBMITTED",
+            response=response,
+            oanda_order_id=order_id,
+            oanda_trade_id=trade_id,
+        )
+        log_event(
+            execution_logger,
+            "execution_submitted",
+            symbol=symbol,
+            action=action,
+            order_id=order_id,
+            trade_id=trade_id,
+        )
+        return action
 
-            insert_decision(
-                symbol=symbol,
-                state=state,
-                spread_pips=spread_pips,
-                candle_ts=datetime.now(timezone.utc).isoformat(),
-                signal="HOLD",
-                reason="strategy not enabled (phase 1)",
-                metadata=metadata,
-            )
+    def _get_client(self) -> OandaClient:
+        if self.client is None:
+            self.client = OandaClient()
+        return self.client
 
-            log_event(
-                decision_logger,
-                "decision",
-                symbol=symbol,
-                state=state,
-                spread_pips=spread_pips,
-                signal="HOLD",
-                reason="strategy not enabled (phase 1)",
-            )
+    def _get_candles(self, symbol: str) -> list[dict[str, Any]]:
+        client = self._get_client()
+        return client.get_candles(symbol, self.settings.timeframe, self.settings.candle_count)
 
-        self.error_state["last_evaluator_run"] = datetime.now(timezone.utc).isoformat()
+    def _log_hold_decision(
+        self,
+        symbol: str,
+        candle_ts: Optional[str],
+        reason: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        insert_decision(
+            symbol=symbol,
+            state="HUNTING",
+            spread_pips=0.0,
+            candle_ts=candle_ts or _now_ts(),
+            signal="HOLD",
+            reason=reason,
+            metadata={
+                **metadata,
+                "timeframe": self.settings.timeframe,
+                "action": "HOLD",
+                "current_position_side": None,
+                "current_units": 0,
+            },
+        )
+        log_event(
+            decision_logger,
+            "decision",
+            symbol=symbol,
+            candle_ts=candle_ts or _now_ts(),
+            timeframe=self.settings.timeframe,
+            signal="HOLD",
+            reason=reason,
+            state="HUNTING",
+            action="HOLD",
+            current_position_side=None,
+            current_units=0,
+            metadata=metadata,
+        )
