@@ -1,0 +1,39 @@
+{
+  "params": {
+    "symbol": "NZD_USD",
+    "timeframe": "M5",
+    "from": "2026-01-28",
+    "to": "2026-02-07",
+    "days": 10,
+    "units": 1000,
+    "spread_pips": 2.5,
+    "fill": "next_open",
+    "tp1_pips": 20,
+    "sl_pips": 28,
+    "tp1_close_pct": 30,
+    "trail_drawdown_pct": 2.0,
+    "be_lock_pips": 20,
+    "bar_fill_policy": "conservative",
+    "use_runner": true,
+    "use_stoch_exit": false,
+    "st_tight_pips": 6
+  },
+  "metrics": {
+    "total_trades": 654.0,
+    "win_rate": 17.2782874617737,
+    "avg_win": 0.5553008849556812,
+    "avg_loss": -0.45048059149731023,
+    "profit_factor": 0.25747404702302096,
+    "total_pnl_pips_weighted": -1809.6100000005288,
+    "total_pnl_pips_raw": -1535.5000000005348,
+    "total_pnl_usd": -180.96100000005288,
+    "max_drawdown_pips": 1809.6100000005285,
+    "sharpe": -14.560431197233886,
+    "avg_hold_bars": 3.4109375,
+    "tp1_hit_pct": 2.1875,
+    "runner_pnl_usd": 13.124999999999718,
+    "num_ambiguous_bars": 0.0,
+    "num_same_bar_tp1_and_runner": 0.0,
+    "num_stopouts": 0.0
+  }
+}

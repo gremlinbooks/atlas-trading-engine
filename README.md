@@ -122,10 +122,24 @@ If `STRATEGY_ENABLED=false`, the strategy will hold. Set `STRATEGY_ENABLED=true`
 Optional fill model:
 - `--fill=next_open` (default)
 - `--fill=close`
+Entry timing:
+- `--entry_timing close` forces bar-close entries (TradingView-like)
+- `--entry_timing intrabar` uses the fill model above
 
 Notes:
 - Backtests assume mid-price candles with a configurable spread cost via `--spread_pips`.
 - TP/SL fills are simulated at the level using candle high/low.
+
+Live-reality backtests with M1 magnifier + bid/ask modeling:
+
+```bash
+python -m app.backtest.run --symbol AUD_USD --timeframe M15 --days 30 --units 7000 --spread_pips 1.6 --exec_profile live_reality --magnifier m1 --use_bid_ask true --entry_timing close
+```
+
+Notes:
+- `--exec_profile live_reality` enables M1 magnifier by default for M5+ timeframes.
+- `--use_bid_ask true` models entries at ask and exits at bid (shorts invert).
+- `--entry_timing close` enforces bar-close confirmed entries.
 
 ## How To Run TradingView-Parity Backtests
 
@@ -149,6 +163,7 @@ python -m app.backtest.run \
 
 Notes:
 - `--bar_fill_policy=conservative` assumes SL hits before TP1 if both are touched in the same candle.
+- `--bar_fill_policy=optimistic` assumes TP1 hits before SL in the same candle and can allow same-bar TP1 + runner stops.
 - Spread is modeled as half-spread on entry and exit.
 - TP1 closes `tp1_close_pct` of units and the runner uses trailing + BE after TP1.
 

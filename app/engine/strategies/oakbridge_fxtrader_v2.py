@@ -548,7 +548,7 @@ def _update_pending_signals(
     pend_long_age = state.pend_long_age
     pend_short_age = state.pend_short_age
 
-    if long_signal_ok and not ok_spread and not state.pend_long:
+    if long_signal_ok and not ok_spread:
         pend_long = True
         pend_long_age = 0
     elif pend_long:
@@ -556,7 +556,7 @@ def _update_pending_signals(
         if not long_intent:
             pend_long = False
 
-    if short_signal_ok and not ok_spread and not state.pend_short:
+    if short_signal_ok and not ok_spread:
         pend_short = True
         pend_short_age = 0
     elif pend_short:

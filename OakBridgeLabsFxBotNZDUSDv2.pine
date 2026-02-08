@@ -1,0 +1,366 @@
+//@version=6
+strategy("2026OakBridgeLabsFxTrader-v2",
+     overlay=true,
+     initial_capital=25000,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=97,
+     calc_on_order_fills=false,
+     calc_on_every_tick=false,
+     pyramiding=0,
+     commission_value=0)
+
+// ──────────────────────────────────────────────────────────────
+// Safe defaults / state
+var bool okTime = true
+var bool okSpread = true
+var bool enterLongSig = false
+var bool enterShortSig = false
+
+// ──────────────────────────────────────────────────────────────
+// Inputs (baseline)
+tp1Pips        = input.int(20, "TP1 (pips)", minval=1)
+slPips         = input.int(28, "Stop Loss (pips)", minval=1)
+tp1ClosePct    = input.int(30, "TP1 Close (%)", minval=1, maxval=99)
+runnerClosePct = 100 - tp1ClosePct
+trailDrawdownPct = input.float(2.0, "Runner Drawback (%) after TP1", minval=0.1, step=0.1)
+beLockPips       = input.int(20, "BE Lock (pips) after TP1", minval=0)
+
+useInvertEurCad = input.bool(true, "Invert signals on EURCAD")
+useBias         = input.bool(false, "Bias: Long only above slow EMA / Short only below")
+forceFlip       = input.bool(true, "Force flip on opposite signal (closes other side)")
+showLevels      = input.bool(true, "Plot TP/SL/BE/Trail levels")
+showSignals     = input.bool(true, "Show Signal Markers")
+
+// StochRSI (light controls)
+stochEntryMode = input.string("Off", "StochRSI entry use", options=["Off","ExtremesOnly","StrictFilter"])
+useStochExit   = input.bool(true, "Tighten runner stop on extreme StochRSI flip")
+st_rsiLen      = input.int(12, "StochRSI • RSI Length")
+st_stochLen    = input.int(16, "StochRSI • Stoch Length")
+st_kLen        = input.int(3, "StochRSI • %K Smoothing")
+st_dLen        = input.int(9, "StochRSI • %D Smoothing")
+st_OB          = input.float(89, "StochRSI • Overbought")
+st_OS          = input.float(14, "StochRSI • Oversold")
+st_recent      = input.int(0, "StrictFilter: cross must be within N bars", minval=0)
+st_tightPips   = input.int(6, "Exit tighten: pips on extreme flip", minval=0)
+
+// Time Block (toggle + weekday mask)
+blockTrades    = input.bool(false, "Block entries during window (chart TZ)")
+blockSession   = input.session("1500-2200", "Blocked window")
+quickRelax     = input.bool(false, "RELAX time filter (ignores block window)")
+useDayMask     = input.bool(false, "Apply block only on selected weekdays?")
+blockMon       = input.bool(false, "Block Monday")
+blockTue       = input.bool(false, "Block Tuesday")
+blockWed       = input.bool(false, "Block Wednesday")
+blockThu       = input.bool(false, "Block Thursday")
+blockFri       = input.bool(false, "Block Friday")
+blockSat       = input.bool(false, "Block Saturday")
+blockSun       = input.bool(false, "Block Sunday")
+showBlockedBG  = input.bool(true, "Shade background during blocked window")
+
+// Live spread gate
+useSpreadGate     = input.bool(true, "Gate entries by live spread (bid/ask)")
+maxSpreadPips     = input.float(5.0, "Max allowed spread (pips)", minval=0.1, step=0.1)
+
+// IMPORTANT: default set to 1.0 so 5.0 pips means 5.0 pips live.
+aggrSpreadFactor  = input.float(1.0, "Aggressive multiplier on realtime bars", minval=1.0, step=0.05)
+
+holdSignalBars    = input.int(8, "Hold pending signal up to N bars", minval=0, maxval=100)
+applyOnHistory    = input.bool(false, "Apply spread gate on historical bars (if bid/ask available)")
+showSpreadViz     = input.bool(true, "Show live spread & block shading")
+
+// NEW: Alert test mode (no OANDA). When enabled, emits alert() JSON you can catch with ONE TradingView alert.
+useAlertCalls     = input.bool(true, "Use alert() calls (ONE alert mode)")
+alertFreqMode     = input.string("OncePerBar", "alert() frequency", options=["OncePerBar","OncePerBarClose"])
+
+// EMAs & signals
+fastLen   = input.int(3, "Fast EMA", minval=1)
+slowLen   = input.int(4, "Slow EMA", minval=1)
+fastEMA   = ta.ema(close, fastLen)
+slowEMA   = ta.ema(close, slowLen)
+spreadEMA = fastEMA - slowEMA
+crossUp   = ta.crossover(spreadEMA, 0) or (spreadEMA > 0 and spreadEMA[1] <= 0)
+crossDn   = ta.crossunder(spreadEMA, 0) or (spreadEMA < 0 and spreadEMA[1] >= 0)
+
+// Pip helper
+var bool isJpyPair = str.contains(syminfo.ticker, "JPY")
+pip = isJpyPair ? 0.01 : 0.0001
+
+// EURCAD inversion (harmless on NZDUSD)
+symU      = str.upper(syminfo.ticker)
+isEurCad  = str.contains(symU, "EURCAD") or (syminfo.basecurrency == "EUR" and syminfo.currency == "CAD")
+doInvert  = useInvertEurCad and isEurCad
+
+// Optional extra entries to increase frequency
+usePullbackReCross  = input.bool(true, "Extra: Pullback Re-cross entries")
+pbLookbackBars      = input.int(8, "Pullback lookback (bars)", minval=2)
+useContinuationBreak= input.bool(true, "Extra: Continuation Breakout after small base")
+baseMaxBars         = input.int(5, "Base max bars", minval=2, maxval=15)
+baseMaxRangeATR     = input.float(0.6, "Base max height (x ATR14)", minval=0.1, step=0.1)
+
+// Re-entry control (after exit)
+allowSecondChance = input.bool(true, "Re-enter if trend intact within N bars after exit")
+reenterWithinBars = input.int(12, "Re-enter window (bars)", minval=1, maxval=100)
+
+// Primary signals (original)
+longSignal_raw  = crossUp
+shortSignal_raw = crossDn
+
+// Trend bias application
+longSig0         = doInvert ? shortSignal_raw : longSignal_raw
+shortSig0        = doInvert ? longSignal_raw  : shortSignal_raw
+longSignal_base  = useBias ? (longSig0  and close > slowEMA) : longSig0
+shortSignal_base = useBias ? (shortSig0 and close < slowEMA) : shortSig0
+
+// Extra Entry A: Pullback Re-cross
+pulledToSlowL  = ta.lowest(low, pbLookbackBars)  <= slowEMA
+pulledToSlowS  = ta.highest(high, pbLookbackBars) >= slowEMA
+recrossFastL   = ta.crossover(close, fastEMA)
+recrossFastS   = ta.crossunder(close, fastEMA)
+pullbackLong   = usePullbackReCross and (close > slowEMA) and pulledToSlowL and recrossFastL
+pullbackShort  = usePullbackReCross and (close < slowEMA) and pulledToSlowS and recrossFastS
+
+// Extra Entry B: Continuation Breakout after base
+atr14   = ta.atr(14)
+baseHi  = ta.highest(high, baseMaxBars)
+baseLo  = ta.lowest(low,  baseMaxBars)
+baseOK  = (baseHi - baseLo) <= baseMaxRangeATR * atr14
+contLong  = useContinuationBreak and baseOK and close > baseHi and close > slowEMA
+contShort = useContinuationBreak and baseOK and close < baseLo and close < slowEMA
+
+// Combine entry intents
+longIntent  = longSignal_base  or pullbackLong  or contLong
+shortIntent = shortSignal_base or pullbackShort or contShort
+
+// Entry state (NA-safe)
+posSize = nz(strategy.position_size, 0)
+inLong  = posSize > 0
+inShort = posSize < 0
+flat    = posSize == 0
+
+// StochRSI calc
+_st_r   = ta.rsi(close, st_rsiLen)
+_st_lo  = ta.lowest(_st_r, st_stochLen)
+_st_hi  = ta.highest(_st_r, st_stochLen)
+_st_k   = 100 * (_st_r - _st_lo) / math.max(_st_hi - _st_lo, 1e-10)
+stK     = ta.sma(_st_k, st_kLen)
+stD     = ta.sma(stK,   st_dLen)
+stKxUp  = ta.crossover(stK, stD)
+stKxDn  = ta.crossunder(stK, stD)
+
+// Strict versions (only if StrictFilter)
+longStochOkStrict  = (stK > stD) and (stK < st_OB) and (st_recent == 0 or ta.barssince(stKxUp)  <= st_recent)
+shortStochOkStrict = (stK < stD) and (stK > st_OS) and (st_recent == 0 or ta.barssince(stKxDn) <= st_recent)
+
+// Entry gating (StochRSI modes)
+longSignalOK  = longIntent
+shortSignalOK = shortIntent
+if stochEntryMode == "ExtremesOnly"
+    longSignalOK  := longIntent  and (stK < st_OB)
+    shortSignalOK := shortIntent and (stK > st_OS)
+else if stochEntryMode == "StrictFilter"
+    longSignalOK  := longIntent  and longStochOkStrict
+    shortSignalOK := shortIntent and shortStochOkStrict
+
+// Time gating
+inBlockSess   = not na(time(timeframe.period, blockSession))
+isMon = dayofweek == dayofweek.monday
+isTue = dayofweek == dayofweek.tuesday
+isWed = dayofweek == dayofweek.wednesday
+isThu = dayofweek == dayofweek.thursday
+isFri = dayofweek == dayofweek.friday
+isSat = dayofweek == dayofweek.saturday
+isSun = dayofweek == dayofweek.sunday
+dayIsBlocked = not useDayMask or ((blockMon and isMon) or (blockTue and isTue) or (blockWed and isWed) or (blockThu and isThu) or (blockFri and isFri) or (blockSat and isSat) or (blockSun and isSun))
+okTime := quickRelax ? true : not (blockTrades and dayIsBlocked and inBlockSess)
+bgcolor(showBlockedBG and not okTime ? color.new(color.gray, 85) : na)
+
+// Live spread gate & pending signals
+hasBA           = not na(ask) and not na(bid)
+spreadPipsLive  = hasBA ? (ask - bid) / pip : na
+usingGateNow    = useSpreadGate and (barstate.isrealtime or applyOnHistory)
+maxAllowedSpread= barstate.isrealtime ? maxSpreadPips * aggrSpreadFactor : maxSpreadPips
+
+// UPDATED: only block when we can actually measure spread.
+// If bid/ask is unavailable, do NOT block trades (and optionally shade yellow).
+okSpread := not usingGateNow or (not hasBA) or (spreadPipsLive <= maxAllowedSpread)
+
+bgcolor(showSpreadViz and usingGateNow and hasBA and spreadPipsLive > maxAllowedSpread ? color.new(color.red, 88) : na)
+bgcolor(showSpreadViz and usingGateNow and not hasBA ? color.new(color.yellow, 88) : na)
+plot(showSpreadViz and usingGateNow ? spreadPipsLive : na, title="Live Spread (pips)", style=plot.style_line, color=color.new(color.gray, 0))
+
+var bool pendLong    = false
+var bool pendShort   = false
+var int  pendLongAge = 0
+var int  pendShortAge= 0
+if usingGateNow
+    if longSignalOK and not okSpread
+        pendLong := true
+        pendLongAge := 0
+    else if pendLong
+        pendLongAge += 1
+        if not longIntent
+            pendLong := false
+    if shortSignalOK and not okSpread
+        pendShort := true
+        pendShortAge := 0
+    else if pendShort
+        pendShortAge += 1
+        if not shortIntent
+            pendShort := false
+
+// Track last flat bar for second-chance logic
+var int lastFlatBar = na
+if flat and na(lastFlatBar)
+    lastFlatBar := bar_index
+if not flat
+    lastFlatBar := na
+secondChanceOKLong  = allowSecondChance and flat and (bar_index - nz(lastFlatBar, bar_index)) <= reenterWithinBars
+secondChanceOKShort = secondChanceOKLong
+
+// ──────────────────────────────────────────────────────────────
+// Helper: send JSON alerts for ONE-alert mode
+send(action) =>
+    // choose frequency
+    _freq = alertFreqMode == "OncePerBarClose" ? alert.freq_once_per_bar_close : alert.freq_once_per_bar
+    // time as epoch ms string is fine for your bot, but keep it simple
+    _payload = '{"alert_id":"' + action + '_' + str.tostring(time) + '","symbol":"' + syminfo.ticker + '","action":"' + action + '","time":"' + str.tostring(time) + '"}'
+    alert(_payload, _freq)
+
+// ──────────────────────────────────────────────────────────────
+// ENTRIES (aligned with alerts, mutual exclusion, one-shot)
+// Intrabar allowed. No bar-close gate.
+canLong  = okTime and okSpread and longSignalOK
+canShort = okTime and okSpread and shortSignalOK
+
+// Mutual exclusion: prefer EMA spread direction if both sides light up
+bothSides = canLong and canShort
+takeLong  = canLong  and (not bothSides or spreadEMA > 0)
+takeShort = canShort and (not bothSides or spreadEMA < 0)
+
+// Final wants with position context
+wantLong  = takeLong  and (flat or inShort or secondChanceOKLong)
+wantShort = takeShort and (flat or inLong  or secondChanceOKShort)
+
+// One shot per bar
+var int lastTradeBar = na
+alreadyTradedThisBar = (lastTradeBar == bar_index)
+
+if barstate.isconfirmed
+    if not alreadyTradedThisBar
+        if wantLong
+            if forceFlip and inShort
+                strategy.close("SHORT")
+            if flat or inShort
+                strategy.entry("LONG", strategy.long)
+                if useAlertCalls
+                    send("LONG")
+                pendLong := false
+                lastTradeBar := bar_index
+        else if wantShort
+            if forceFlip and inLong
+                strategy.close("LONG")
+            if flat or inLong
+                strategy.entry("SHORT", strategy.short)
+                if useAlertCalls
+                    send("SHORT")
+                pendShort := false
+                lastTradeBar := bar_index
+
+
+// ──────────────────────────────────────────────────────────────
+// Levels from avg price
+avgPrice  = strategy.position_avg_price
+long_tp1  = avgPrice + tp1Pips * pip
+long_sl   = avgPrice - slPips * pip
+short_tp1 = avgPrice - tp1Pips * pip
+short_sl  = avgPrice + slPips * pip
+
+// TP1 flags & extrema
+var bool  long_tp1_reached  = false
+var bool  short_tp1_reached = false
+var float longPeak   = na
+var float shortTrough= na
+if posSize == 0
+    long_tp1_reached  := false
+    short_tp1_reached := false
+    longPeak := na
+    shortTrough := na
+else
+    if inLong
+        short_tp1_reached := false
+        shortTrough := na
+    if inShort
+        long_tp1_reached := false
+        longPeak := na
+
+if inLong and high >= long_tp1
+    long_tp1_reached := true
+if inShort and low <= short_tp1
+    short_tp1_reached := true
+
+if inLong and long_tp1_reached
+    longPeak := na(longPeak) ? high : math.max(longPeak, high)
+if inShort and short_tp1_reached
+    shortTrough := na(shortTrough) ? low : math.min(shortTrough, low)
+
+// Trailing & tighten calcs
+trailFrac            = trailDrawdownPct / 100.0
+longTrailCandidate   = long_tp1_reached  and not na(longPeak)    ? longPeak   * (1 - trailFrac) : na
+shortTrailCandidate  = short_tp1_reached and not na(shortTrough) ? shortTrough* (1 + trailFrac) : na
+longBE               = avgPrice + beLockPips * pip
+shortBE              = avgPrice - beLockPips * pip
+long_runner_stop     = long_tp1_reached  ? math.max(longBE,  nz(longTrailCandidate,  longBE))  : long_sl
+short_runner_stop    = short_tp1_reached ? math.min(shortBE, nz(shortTrailCandidate, shortBE)) : short_sl
+longTight            = (inLong  and useStochExit and stKxDn and stK > st_OB) ? close - st_tightPips * pip : na
+shortTight           = (inShort and useStochExit and stKxUp and stK < st_OS) ? close + st_tightPips * pip : na
+long_runner_stop_final  = math.max(long_runner_stop,  nz(longTight,  long_runner_stop))
+short_runner_stop_final = math.min(short_runner_stop, nz(shortTight, short_runner_stop))
+
+// ──────────────────────────────────────────────────────────────
+// EXITS (intrabar allowed)
+if inLong
+    strategy.exit(id="L-TP1", from_entry="LONG",  limit=long_tp1,  stop=long_sl,  qty_percent=tp1ClosePct)
+if inShort
+    strategy.exit(id="S-TP1", from_entry="SHORT", limit=short_tp1, stop=short_sl, qty_percent=tp1ClosePct)
+
+// Runner ONLY AFTER TP1 (prevents dual stopouts at initial SL)
+if inLong and long_tp1_reached
+    strategy.exit(id="L-RUN", from_entry="LONG",  stop=long_runner_stop_final,  qty_percent=runnerClosePct)
+if inShort and short_tp1_reached
+    strategy.exit(id="S-RUN", from_entry="SHORT", stop=short_runner_stop_final, qty_percent=runnerClosePct)
+
+// ──────────────────────────────────────────────────────────────
+// Visuals
+plot(showLevels and inLong  ? long_tp1  : na, title="Long TP1",            style=plot.style_linebr, linewidth=1, color=color.new(color.green, 0))
+plot(showLevels and inShort ? short_tp1 : na, title="Short TP1",           style=plot.style_linebr, linewidth=1, color=color.new(color.green, 0))
+plot(showLevels and inLong  ? long_sl   : na, title="Long Initial SL",     style=plot.style_linebr, linewidth=1, color=color.new(color.red, 0))
+plot(showLevels and inShort ? short_sl  : na, title="Short Initial SL",    style=plot.style_linebr, linewidth=1, color=color.new(color.red, 0))
+plot(showLevels and inLong  and long_tp1_reached  ? longBE : na,           title="Long BE (after TP1)",   style=plot.style_linebr, linewidth=1, color=color.new(color.yellow, 0))
+plot(showLevels and inShort and short_tp1_reached ? shortBE: na,           title="Short BE (after TP1)",  style=plot.style_linebr, linewidth=1, color=color.new(color.purple, 0))
+plot(showLevels and inLong  and long_tp1_reached  ? long_runner_stop_final  : na, title="Long Trailing Stop",  style=plot.style_linebr, linewidth=1, color=color.new(color.aqua, 0))
+plot(showLevels and inShort and short_tp1_reached ? short_runner_stop_final : na, title="Short Trailing Stop", style=plot.style_linebr, linewidth=1, color=color.new(color.aqua, 0))
+plotshape(showSignals and longSignalOK,  title="Long Signal OK",  style=shape.triangleup,   location=location.belowbar, size=size.tiny, color=color.new(color.green, 0))
+plotshape(showSignals and shortSignalOK, title="Short Signal OK", style=shape.triangledown, location=location.abovebar, size=size.tiny, color=color.new(color.red,   0))
+
+// ──────────────────────────────────────────────────────────────
+// Alerts (conditions only) — still available if you want them
+enterLongSig  := okTime and okSpread and longSignalOK  and (flat or inShort)
+enterShortSig := okTime and okSpread and shortSignalOK and (flat or inLong)
+alertcondition(enterLongSig,  title="LONG entry")
+alertcondition(enterShortSig, title="SHORT entry")
+tp1HitLong  = long_tp1_reached  and inLong
+tp1HitShort = short_tp1_reached and inShort
+alertcondition(tp1HitLong,  title="TP1 HIT (LONG)")
+alertcondition(tp1HitShort, title="TP1 HIT (SHORT)")
+
+// ──────────────────────────────────────────────────────────────
+// Optional debug overlays
+showDebug = input.bool(false, "Show debug signals (0/1 overlays)")
+plot(showDebug ? (longSignalOK  ? 1 : 0) : na, title="DBG longSignalOK",  style=plot.style_columns)
+plot(showDebug ? (shortSignalOK ? 1 : 0) : na, title="DBG shortSignalOK", style=plot.style_columns)
+plot(showDebug ? (canLong       ? 1 : 0) : na, title="DBG canLong",       style=plot.style_line)
+plot(showDebug ? (canShort      ? 1 : 0) : na, title="DBG canShort",      style=plot.style_line)
+plot(showDebug ? (takeLong      ? 1 : 0) : na, title="DBG takeLong",      style=plot.style_line)
+plot(showDebug ? (takeShort     ? 1 : 0) : na, title="DBG takeShort",     style=plot.style_line)
+plotshape(showDebug and (wantLong  and not alreadyTradedThisBar),  title="DBG chose LONG",  style=shape.triangleup, location=location.belowbar, color=color.new(color.green, 0), size=size.tiny)
+plotshape(showDebug and (wantShort and not alreadyTradedThisBar),  title="DBG chose SHORT", style=shape.triangledown, location=location.abovebar, color=color.new(color.red,   0), size=size.tiny)

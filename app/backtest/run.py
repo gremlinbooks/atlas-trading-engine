@@ -34,6 +34,7 @@ class TradeResult:
     leg: str
     reason: str
     pnl_pips: float
+    pnl_pips_weighted: float
     pnl_usd: float
     mae_pips: float
     equity: float
@@ -105,6 +106,29 @@ def main() -> None:
         reenter_within_bars=settings.strategy_reenter_within_bars,
     )
     from_dt, to_dt = _resolve_date_range(args.days, args.from_date, args.to_date)
+    tv_panel_mode = args.exec_profile == "tv_panel"
+    if args.magnifier:
+        if args.magnifier == "off":
+            args.magnify_tf = None
+        else:
+            args.magnify_tf = "M1"
+    if tv_panel_mode:
+        args.tv_parity = False
+        args.magnify_tf = None
+        args.entry_timing = "close"
+    if args.tv_parity:
+        if not args.magnify_tf:
+            args.magnify_tf = "M1"
+        if not args.entry_timing:
+            args.entry_timing = "close"
+        if not args.magnify_policy:
+            args.magnify_policy = "conservative"
+    if args.exec_profile == "live_reality" and not args.entry_timing:
+        args.entry_timing = "close"
+    if args.exec_profile == "live_reality" and args.magnify_tf is None:
+        if _timeframe_to_minutes(args.timeframe) >= 5:
+            args.magnify_tf = "M1"
+
     candles = _fetch_candles(
         client=client,
         symbol=args.symbol,
@@ -115,20 +139,80 @@ def main() -> None:
     if len(candles) < 2:
         raise SystemExit("Not enough candles returned for backtest")
 
+    magnifier_candles: list[dict[str, Any]] | None = None
+    if args.magnify_tf and args.magnify_tf.upper() != args.timeframe.upper():
+        magnifier_candles = _fetch_candles(
+            client=client,
+            symbol=args.symbol,
+            timeframe=args.magnify_tf,
+            from_dt=from_dt,
+            to_dt=to_dt,
+        )
+
+    effective_fill = args.fill
+    if args.entry_timing:
+        if args.entry_timing == "intrabar":
+            effective_fill = args.fill
+        else:
+            effective_fill = "close"
+
+    spread_pips_effective = 0.0 if tv_panel_mode else args.spread_pips
+    use_bid_ask_effective = False if tv_panel_mode else args.use_bid_ask
+    if args.tv_parity:
+        use_bid_ask_effective = True
+
+    _print_config_table(
+        exec_profile=args.exec_profile,
+        entry_timing=(args.entry_timing or args.fill),
+        entries_close_only=(effective_fill == "close"),
+        magnifier=("M1" if args.magnify_tf else "OFF"),
+        magnify_policy=(args.magnify_policy if args.magnify_tf else "n/a"),
+        use_bid_ask=use_bid_ask_effective,
+        spread_effective=spread_pips_effective,
+        bar_fill_policy=args.bar_fill_policy,
+        parity_debug=args.parity_debug,
+    )
+    if tv_panel_mode:
+        print("Entry timing: close")
+        print("Magnifier: OFF")
+        print("Standard OHLC: OFF")
+        print("Commission: 0")
+        print("Slippage: 0")
+
     trades, equity_curve, metrics_extra = _run_backtest(
         candles=candles,
         symbol=args.symbol,
         timeframe=args.timeframe,
         units=args.units,
-        spread_pips=args.spread_pips,
-        fill=args.fill,
+        spread_pips=spread_pips_effective,
+        fill=effective_fill,
         bar_fill_policy=args.bar_fill_policy,
         use_runner=args.use_runner,
         strategy=strategy,
         strategy_config=strategy_config,
+        magnify_tf=args.magnify_tf,
+        magnify_policy=args.magnify_policy,
+        magnifier_candles=magnifier_candles,
+        tv_parity=args.tv_parity,
+        exec_profile=args.exec_profile,
+        use_bid_ask=use_bid_ask_effective,
     )
 
     metrics = _print_summary(trades, equity_curve, metrics_extra)
+    if args.tv_parity:
+        print("TV parity: enabled")
+        print(f"Entry timing: {effective_fill}")
+        print("Spread model: bid/ask half-spread")
+        print(f"Spread pips: {args.spread_pips}")
+        print("Parity sanity:")
+        print(f"  Entries long: {int(metrics_extra.get('entries_long', 0))}")
+        print(f"  Entries short: {int(metrics_extra.get('entries_short', 0))}")
+        print(f"  TP1 hits: {int(metrics_extra.get('tp1_hits', 0))}")
+        print(f"  Runner exits: {int(metrics_extra.get('runner_exits', 0))}")
+        print(f"  Same-subbar conflicts: {int(metrics_extra.get('num_same_bar_tp1_and_runner', 0))}")
+    if args.magnify_tf:
+        print(f"Magnifier TF: {args.magnify_tf}")
+        print(f"Magnifier Policy: {args.magnify_policy}")
     _write_reports(
         symbol=args.symbol,
         timeframe=args.timeframe,
@@ -142,6 +226,8 @@ def main() -> None:
             "days": args.days,
             "units": args.units,
             "spread_pips": args.spread_pips,
+            "spread_pips_effective": spread_pips_effective,
+            "use_bid_ask": use_bid_ask_effective,
             "fill": args.fill,
             "tp1_pips": args.tp1_pips,
             "sl_pips": args.sl_pips,
@@ -152,9 +238,20 @@ def main() -> None:
             "use_runner": args.use_runner,
             "use_stoch_exit": args.use_stoch_exit,
             "st_tight_pips": args.st_tight_pips,
+            "exec_profile": args.exec_profile,
+            "magnifier": args.magnifier,
+            "parity_debug": args.parity_debug,
         },
         metrics=metrics,
     )
+    if args.parity_debug:
+        _write_parity_debug(
+            symbol=args.symbol,
+            timeframe=args.timeframe,
+            trades=trades,
+            from_dt=from_dt,
+            to_dt=to_dt,
+        )
 
 
 def _parse_args() -> argparse.Namespace:
@@ -180,6 +277,22 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--use_runner", type=_parse_bool, default=True)
     parser.add_argument("--use_stoch_exit", type=_parse_bool, default=False)
     parser.add_argument("--st_tight_pips", type=int, default=6)
+    parser.add_argument("--magnify_tf")
+    parser.add_argument("--magnifier", choices=["off", "m1"])
+    parser.add_argument(
+        "--magnify_policy",
+        choices=["conservative", "optimistic"],
+        default="conservative",
+    )
+    parser.add_argument("--use_bid_ask", type=_parse_bool, default=True)
+    parser.add_argument("--tv_parity", type=_parse_bool, default=False)
+    parser.add_argument("--entry_timing", choices=["close", "intrabar"])
+    parser.add_argument(
+        "--exec_profile",
+        choices=["tv_panel", "live_reality"],
+        default="live_reality",
+    )
+    parser.add_argument("--parity_debug", type=_parse_bool, default=False)
     return parser.parse_args()
 
 
@@ -220,6 +333,49 @@ def _fetch_candles(
     return [all_candles[k] for k in sorted(all_candles)]
 
 
+def _build_magnifier_map(
+    *,
+    signal_candles: list[dict[str, Any]],
+    magnifier_candles: list[dict[str, Any]],
+    timeframe: str,
+) -> list[list[dict[str, Any]]]:
+    window_seconds = _timeframe_to_seconds(timeframe)
+    buckets: list[list[dict[str, Any]]] = []
+    mag_index = 0
+    for candle in signal_candles:
+        start = _parse_candle_time(candle)
+        end = start + timedelta(seconds=window_seconds)
+        bucket: list[dict[str, Any]] = []
+        while mag_index < len(magnifier_candles):
+            mag_candle = magnifier_candles[mag_index]
+            mag_time = _parse_candle_time(mag_candle)
+            if mag_time < start:
+                mag_index += 1
+                continue
+            if mag_time >= end:
+                break
+            bucket.append(mag_candle)
+            mag_index += 1
+        buckets.append(bucket)
+    return buckets
+
+
+def _resolve_tp1_sl_order(tp1_hit: bool, sl_hit: bool, policy: str) -> tuple[bool, bool]:
+    # Ordering assumption when both TP1 and SL are touched in the same bar/sub-bar.
+    # conservative => SL first, optimistic => TP1 first.
+    if tp1_hit and sl_hit:
+        if policy == "conservative":
+            return False, True
+        return True, False
+    return tp1_hit, sl_hit
+
+
+def _allow_runner_same_candle(tp1_hit: bool, policy: str) -> bool:
+    # Conservative still allows same-candle TP1 + runner if range permits,
+    # but ordering is handled by policy.
+    return True
+
+
 def _run_backtest(
     *,
     candles: list[dict[str, Any]],
@@ -232,6 +388,12 @@ def _run_backtest(
     use_runner: bool,
     strategy: Any,
     strategy_config: StrategyConfig,
+    magnify_tf: str | None = None,
+    magnify_policy: str = "conservative",
+    magnifier_candles: list[dict[str, Any]] | None = None,
+    tv_parity: bool = False,
+    exec_profile: str = "live_reality",
+    use_bid_ask: bool = True,
 ) -> tuple[list[TradeResult], list[EquityPoint], dict[str, float]]:
     trades: list[TradeResult] = []
     equity_curve: list[EquityPoint] = []
@@ -251,17 +413,130 @@ def _run_backtest(
     total_trades = 0
     total_hold_bars = 0
     runner_pnl = 0.0
+    num_ambiguous_bars = 0
+    num_same_bar_tp1_and_runner = 0
+    num_stopouts = 0
+    num_entries_long = 0
+    num_entries_short = 0
+    num_runner_exits = 0
 
     strategy_state = StrategyState()
 
     pip_factor = _pip_factor(symbol)
     spread_price = spread_pips * pip_factor
     balance = 0.0
+    tv_panel = exec_profile == "tv_panel"
+
+    magnifier_map: list[list[dict[str, Any]]] | None = None
+    if magnify_tf and magnifier_candles:
+        magnifier_map = _build_magnifier_map(
+            signal_candles=candles,
+            magnifier_candles=magnifier_candles,
+            timeframe=timeframe,
+        )
 
     last_index = len(candles) - 1
     max_index = last_index if fill == "close" else last_index - 1
 
+    pending_entry: dict[str, Any] | None = None
+    pending_flip: dict[str, Any] | None = None
+    last_entry_bar_ts: Optional[str] = None
+
     for i in range(1, max_index + 1):
+        if magnifier_map is not None:
+            if pending_entry and pending_entry["activate_index"] == i:
+                entry_price = pending_entry["entry_price"]
+                entry_ts = pending_entry["entry_ts"]
+                entry_index = i
+                position_side = pending_entry["side"]
+                position_units_opened = float(units)
+                position_units_remaining = float(units)
+                tp1_reached = False
+                long_peak = None
+                short_trough = None
+                mae_pips = 0.0
+                trades.append(
+                    TradeResult(
+                        entry_ts=entry_ts,
+                        exit_ts=entry_ts,
+                        side=position_side,
+                        units_opened=position_units_opened,
+                        units_closed=0.0,
+                        entry_price=entry_price,
+                        exit_price=entry_price,
+                        leg="ENTRY",
+                        reason=pending_entry.get("reason", "ENTRY"),
+                        pnl_pips=0.0,
+                        pnl_pips_weighted=0.0,
+                        pnl_usd=0.0,
+                        mae_pips=0.0,
+                        equity=balance,
+                        hold_bars=0,
+                    )
+                )
+                if position_side == "LONG":
+                    num_entries_long += 1
+                else:
+                    num_entries_short += 1
+                pending_entry = None
+            if pending_flip and pending_flip["activate_index"] == i and position_side:
+                base_price = pending_flip["base_price"]
+                exit_price = _exit_price(base_price, position_side, spread_price) if use_bid_ask else base_price
+                balance, trades = _record_exit(
+                    trades,
+                    equity_curve,
+                    balance,
+                    entry_ts,
+                    pending_flip["entry_ts"],
+                    position_side,
+                    position_units_opened,
+                    position_units_remaining,
+                    entry_price,
+                    exit_price,
+                    "EXIT",
+                    "FLIP",
+                    pip_factor,
+                    mae_pips,
+                    i,
+                    entry_index,
+                )
+                total_trades += 1
+                total_hold_bars += i - (entry_index or i)
+                entry_price = _entry_price(base_price, pending_flip["side"], spread_price) if use_bid_ask else base_price
+                entry_ts = pending_flip["entry_ts"]
+                entry_index = i
+                position_side = pending_flip["side"]
+                position_units_opened = float(units)
+                position_units_remaining = float(units)
+                tp1_reached = False
+                long_peak = None
+                short_trough = None
+                mae_pips = 0.0
+                trades.append(
+                    TradeResult(
+                        entry_ts=entry_ts,
+                        exit_ts=entry_ts,
+                        side=position_side,
+                        units_opened=position_units_opened,
+                        units_closed=0.0,
+                        entry_price=entry_price,
+                        exit_price=entry_price,
+                        leg="ENTRY",
+                        reason="FLIP_ENTRY",
+                        pnl_pips=0.0,
+                        pnl_pips_weighted=0.0,
+                        pnl_usd=0.0,
+                        mae_pips=0.0,
+                        equity=balance,
+                        hold_bars=0,
+                    )
+                )
+                if position_side == "LONG":
+                    num_entries_long += 1
+                else:
+                    num_entries_short += 1
+                pending_flip = None
+
         candle_slice = [
             Candle(
                 ts=c["time"],
@@ -303,17 +578,255 @@ def _run_backtest(
         candle_low = float(candle["l"])
         candle_close = float(candle["c"])
 
+        if magnifier_map is not None:
+            magnifier_candles_for_bar = magnifier_map[i] if i < len(magnifier_map) else []
+            for mag_candle in magnifier_candles_for_bar:
+                if not position_side or entry_price is None:
+                    break
+                mag_high = float(mag_candle["h"])
+                mag_low = float(mag_candle["l"])
+                mag_close = float(mag_candle["c"])
+                half = spread_price / 2
+                bid_high = mag_high - half
+                bid_low = mag_low - half
+                ask_high = mag_high + half
+                ask_low = mag_low + half
+
+                mae_pips = _update_mae(mag_candle, entry_price, position_side, pip_factor, mae_pips)
+                tp1_price, sl_price = _tp1_sl_prices(
+                    position_side,
+                    entry_price,
+                    strategy_config.tp1_pips,
+                    strategy_config.sl_pips,
+                    pip_factor,
+                )
+                if use_bid_ask:
+                    if position_side == "LONG":
+                        tp1_hit = bid_high >= tp1_price
+                        sl_hit = bid_low <= sl_price
+                    else:
+                        tp1_hit = ask_low <= tp1_price
+                        sl_hit = ask_high >= sl_price
+                else:
+                    tp1_hit = _tp1_hit(position_side, mag_high, mag_low, tp1_price)
+                    sl_hit = _sl_hit(position_side, mag_high, mag_low, sl_price)
+                if tp1_hit and sl_hit and not tp1_reached:
+                    num_ambiguous_bars += 1
+                    tp1_hit, sl_hit = _resolve_tp1_sl_order(tp1_hit, sl_hit, magnify_policy)
+                if sl_hit and not tp1_reached:
+                    exit_price = sl_price if not use_bid_ask else _exit_price(sl_price, position_side, spread_price)
+                    balance, trades = _record_exit(
+                        trades,
+                        equity_curve,
+                        balance,
+                        entry_ts,
+                        mag_candle["time"],
+                        position_side,
+                        position_units_opened,
+                        position_units_remaining,
+                        entry_price,
+                        exit_price,
+                        "EXIT",
+                        "SL",
+                        pip_factor,
+                        mae_pips,
+                        i,
+                        entry_index,
+                    )
+                    num_stopouts += 1
+                    total_trades += 1
+                    total_hold_bars += i - (entry_index or i)
+                    position_side, entry_price, entry_ts, entry_index = None, None, None, None
+                    position_units_opened = 0.0
+                    position_units_remaining = 0.0
+                    tp1_reached = False
+                    long_peak = None
+                    short_trough = None
+                    mae_pips = 0.0
+                    break
+
+                if position_side and tp1_hit and position_units_remaining > 0 and not tp1_reached:
+                    tp1_reached = True
+                    tp1_hit_trades += 1
+                    tp1_exec_price = tp1_price if not use_bid_ask else _exit_price(tp1_price, position_side, spread_price)
+                    units_closed = position_units_opened * (strategy_config.tp1_close_pct / 100)
+                    units_closed = min(units_closed, position_units_remaining)
+                    balance, trades = _record_exit(
+                        trades,
+                        equity_curve,
+                        balance,
+                        entry_ts,
+                        mag_candle["time"],
+                        position_side,
+                        position_units_opened,
+                        units_closed,
+                        entry_price,
+                        tp1_exec_price,
+                        "TP1",
+                        "TP1",
+                        pip_factor,
+                        mae_pips,
+                        i,
+                        entry_index,
+                    )
+                    position_units_remaining -= units_closed
+                    if position_side == "LONG":
+                        long_peak = mag_high
+                    else:
+                        short_trough = mag_low
+                    if not use_runner or position_units_remaining <= 0:
+                        balance, trades = _record_exit(
+                            trades,
+                            equity_curve,
+                            balance,
+                            entry_ts,
+                            mag_candle["time"],
+                            position_side,
+                            position_units_opened,
+                            position_units_remaining,
+                            entry_price,
+                            tp1_exec_price,
+                            "EXIT",
+                            "TP1_FULL",
+                            pip_factor,
+                            mae_pips,
+                            i,
+                            entry_index,
+                        )
+                        total_trades += 1
+                        total_hold_bars += i - (entry_index or i)
+                        position_side, entry_price, entry_ts, entry_index = None, None, None, None
+                        position_units_opened = 0.0
+                        position_units_remaining = 0.0
+                        tp1_reached = False
+                        long_peak = None
+                        short_trough = None
+                        mae_pips = 0.0
+                        break
+
+                if position_side and tp1_reached and position_units_remaining > 0 and use_runner:
+                    if position_side == "LONG":
+                        long_peak = max(long_peak or mag_high, mag_high)
+                        trail_candidate = long_peak * (1 - strategy_config.trail_drawdown_pct / 100)
+                        be_stop = entry_price + strategy_config.be_lock_pips * pip_factor
+                        runner_stop = max(be_stop, trail_candidate)
+                        if (
+                            strategy_config.use_stoch_exit
+                            and st_meta.get("stKxDn")
+                            and st_meta.get("k", 0) > strategy_config.st_ob
+                        ):
+                            runner_stop = max(
+                                runner_stop, mag_close - strategy_config.st_tight_pips * pip_factor
+                            )
+                        runner_hit = (bid_low <= runner_stop) if use_bid_ask else (mag_low <= runner_stop)
+                        if runner_hit and tp1_hit and _allow_runner_same_candle(tp1_hit, magnify_policy):
+                            num_same_bar_tp1_and_runner += 1
+                        if runner_hit and (not tp1_hit or _allow_runner_same_candle(tp1_hit, magnify_policy)):
+                            exit_price = runner_stop if not use_bid_ask else _exit_price(runner_stop, position_side, spread_price)
+                            balance, trades = _record_exit(
+                                trades,
+                                equity_curve,
+                                balance,
+                                entry_ts,
+                                mag_candle["time"],
+                                position_side,
+                                position_units_opened,
+                                position_units_remaining,
+                                entry_price,
+                                exit_price,
+                                "RUNNER",
+                                "RUNNER_STOP",
+                                pip_factor,
+                                mae_pips,
+                                i,
+                                entry_index,
+                            )
+                            runner_pnl += trades[-1].pnl_usd
+                            total_trades += 1
+                            total_hold_bars += i - (entry_index or i)
+                            position_side, entry_price, entry_ts, entry_index = None, None, None, None
+                            position_units_opened = 0.0
+                            position_units_remaining = 0.0
+                            tp1_reached = False
+                            long_peak = None
+                            short_trough = None
+                            mae_pips = 0.0
+                            break
+                    else:
+                        short_trough = min(short_trough or mag_low, mag_low)
+                        trail_candidate = short_trough * (1 + strategy_config.trail_drawdown_pct / 100)
+                        be_stop = entry_price - strategy_config.be_lock_pips * pip_factor
+                        runner_stop = min(be_stop, trail_candidate)
+                        if (
+                            strategy_config.use_stoch_exit
+                            and st_meta.get("stKxUp")
+                            and st_meta.get("k", 0) < strategy_config.st_os
+                        ):
+                            runner_stop = min(
+                                runner_stop, mag_close + strategy_config.st_tight_pips * pip_factor
+                            )
+                        runner_hit = (ask_high >= runner_stop) if use_bid_ask else (mag_high >= runner_stop)
+                        if runner_hit and tp1_hit and _allow_runner_same_candle(tp1_hit, magnify_policy):
+                            num_same_bar_tp1_and_runner += 1
+                        if runner_hit and (not tp1_hit or _allow_runner_same_candle(tp1_hit, magnify_policy)):
+                            exit_price = runner_stop if not use_bid_ask else _exit_price(runner_stop, position_side, spread_price)
+                            balance, trades = _record_exit(
+                                trades,
+                                equity_curve,
+                                balance,
+                                entry_ts,
+                                mag_candle["time"],
+                                position_side,
+                                position_units_opened,
+                                position_units_remaining,
+                                entry_price,
+                                exit_price,
+                                "RUNNER",
+                                "RUNNER_STOP",
+                                pip_factor,
+                                mae_pips,
+                                i,
+                                entry_index,
+                            )
+                            runner_pnl += trades[-1].pnl_usd
+                            total_trades += 1
+                            total_hold_bars += i - (entry_index or i)
+                            position_side, entry_price, entry_ts, entry_index = None, None, None, None
+                            position_units_opened = 0.0
+                            position_units_remaining = 0.0
+                            tp1_reached = False
+                            long_peak = None
+                            short_trough = None
+                            mae_pips = 0.0
+                            break
+
         if position_side and entry_price is not None:
             mae_pips = _update_mae(candle, entry_price, position_side, pip_factor, mae_pips)
 
-        if position_side and entry_price is not None:
             tp1_price, sl_price = _tp1_sl_prices(
-                position_side, entry_price, strategy_config.tp1_pips, strategy_config.sl_pips, pip_factor
+                position_side,
+                entry_price,
+                strategy_config.tp1_pips,
+                strategy_config.sl_pips,
+                pip_factor,
             )
-            tp1_hit = _tp1_hit(position_side, candle_high, candle_low, tp1_price)
-            sl_hit = _sl_hit(position_side, candle_high, candle_low, sl_price)
+            if use_bid_ask:
+                bid_high = candle_high - spread_price / 2
+                bid_low = candle_low - spread_price / 2
+                ask_high = candle_high + spread_price / 2
+                ask_low = candle_low + spread_price / 2
+                if position_side == "LONG":
+                    tp1_hit = bid_high >= tp1_price
+                    sl_hit = bid_low <= sl_price
+                else:
+                    tp1_hit = ask_low <= tp1_price
+                    sl_hit = ask_high >= sl_price
+            else:
+                tp1_hit = _tp1_hit(position_side, candle_high, candle_low, tp1_price)
+                sl_hit = _sl_hit(position_side, candle_high, candle_low, sl_price)
 
             if tp1_hit and sl_hit and not tp1_reached:
+                num_ambiguous_bars += 1
                 if bar_fill_policy == "conservative":
                     sl_hit = True
                     tp1_hit = False
@@ -322,7 +835,7 @@ def _run_backtest(
                     sl_hit = False
 
             if sl_hit and not tp1_reached:
-                exit_price = _exit_price(sl_price, position_side, spread_price)
+                exit_price = _exit_price(sl_price, position_side, spread_price) if use_bid_ask else sl_price
                 balance, trades = _record_exit(
                     trades,
                     equity_curve,
@@ -341,6 +854,7 @@ def _run_backtest(
                     i,
                     entry_index,
                 )
+                num_stopouts += 1
                 total_trades += 1
                 total_hold_bars += i - (entry_index or i)
                 position_side, entry_price, entry_ts, entry_index = None, None, None, None
@@ -350,12 +864,11 @@ def _run_backtest(
                 long_peak = None
                 short_trough = None
                 mae_pips = 0.0
-                continue
 
-            if tp1_hit and position_units_remaining > 0 and not tp1_reached:
+            if position_side and tp1_hit and position_units_remaining > 0 and not tp1_reached:
                 tp1_reached = True
                 tp1_hit_trades += 1
-                tp1_price = _exit_price(tp1_price, position_side, spread_price)
+                tp1_exec_price = _exit_price(tp1_price, position_side, spread_price) if use_bid_ask else tp1_price
                 units_closed = position_units_opened * (strategy_config.tp1_close_pct / 100)
                 units_closed = min(units_closed, position_units_remaining)
                 balance, trades = _record_exit(
@@ -368,7 +881,7 @@ def _run_backtest(
                     position_units_opened,
                     units_closed,
                     entry_price,
-                    tp1_price,
+                    tp1_exec_price,
                     "TP1",
                     "TP1",
                     pip_factor,
@@ -381,6 +894,7 @@ def _run_backtest(
                     long_peak = candle_high
                 else:
                     short_trough = candle_low
+
                 if not use_runner or position_units_remaining <= 0:
                     balance, trades = _record_exit(
                         trades,
@@ -392,7 +906,7 @@ def _run_backtest(
                         position_units_opened,
                         position_units_remaining,
                         entry_price,
-                        tp1_price,
+                        tp1_exec_price,
                         "EXIT",
                         "TP1_FULL",
                         pip_factor,
@@ -409,18 +923,29 @@ def _run_backtest(
                     long_peak = None
                     short_trough = None
                     mae_pips = 0.0
-                    continue
 
-            if tp1_reached and position_units_remaining > 0:
+            if position_side and tp1_reached and position_units_remaining > 0 and use_runner:
                 if position_side == "LONG":
                     long_peak = max(long_peak or candle_high, candle_high)
                     trail_candidate = long_peak * (1 - strategy_config.trail_drawdown_pct / 100)
                     be_stop = entry_price + strategy_config.be_lock_pips * pip_factor
                     runner_stop = max(be_stop, trail_candidate)
-                    if strategy_config.use_stoch_exit and st_meta.get("stKxDn") and st_meta.get("k", 0) > strategy_config.st_ob:
-                        runner_stop = max(runner_stop, candle_close - strategy_config.st_tight_pips * pip_factor)
-                    if candle_low <= runner_stop:
-                        exit_price = _exit_price(runner_stop, position_side, spread_price)
+                    if (
+                        strategy_config.use_stoch_exit
+                        and st_meta.get("stKxDn")
+                        and st_meta.get("k", 0) > strategy_config.st_ob
+                    ):
+                        runner_stop = max(
+                            runner_stop, candle_close - strategy_config.st_tight_pips * pip_factor
+                        )
+                    if use_bid_ask:
+                        runner_hit = (candle_low - spread_price / 2) <= runner_stop
+                    else:
+                        runner_hit = candle_low <= runner_stop
+                    if runner_hit and tp1_hit and bar_fill_policy == "optimistic":
+                        num_same_bar_tp1_and_runner += 1
+                    if runner_hit and (not tp1_hit or bar_fill_policy == "optimistic"):
+                        exit_price = _exit_price(runner_stop, position_side, spread_price) if use_bid_ask else runner_stop
                         balance, trades = _record_exit(
                             trades,
                             equity_curve,
@@ -440,6 +965,8 @@ def _run_backtest(
                             entry_index,
                         )
                         runner_pnl += trades[-1].pnl_usd
+                        num_runner_exits += 1
+                        num_runner_exits += 1
                         total_trades += 1
                         total_hold_bars += i - (entry_index or i)
                         position_side, entry_price, entry_ts, entry_index = None, None, None, None
@@ -449,16 +976,27 @@ def _run_backtest(
                         long_peak = None
                         short_trough = None
                         mae_pips = 0.0
-                        continue
                 else:
                     short_trough = min(short_trough or candle_low, candle_low)
                     trail_candidate = short_trough * (1 + strategy_config.trail_drawdown_pct / 100)
                     be_stop = entry_price - strategy_config.be_lock_pips * pip_factor
                     runner_stop = min(be_stop, trail_candidate)
-                    if strategy_config.use_stoch_exit and st_meta.get("stKxUp") and st_meta.get("k", 0) < strategy_config.st_os:
-                        runner_stop = min(runner_stop, candle_close + strategy_config.st_tight_pips * pip_factor)
-                    if candle_high >= runner_stop:
-                        exit_price = _exit_price(runner_stop, position_side, spread_price)
+                    if (
+                        strategy_config.use_stoch_exit
+                        and st_meta.get("stKxUp")
+                        and st_meta.get("k", 0) < strategy_config.st_os
+                    ):
+                        runner_stop = min(
+                            runner_stop, candle_close + strategy_config.st_tight_pips * pip_factor
+                        )
+                    if use_bid_ask:
+                        runner_hit = (candle_high + spread_price / 2) >= runner_stop
+                    else:
+                        runner_hit = candle_high >= runner_stop
+                    if runner_hit and tp1_hit and bar_fill_policy == "optimistic":
+                        num_same_bar_tp1_and_runner += 1
+                    if runner_hit and (not tp1_hit or bar_fill_policy == "optimistic"):
+                        exit_price = _exit_price(runner_stop, position_side, spread_price) if use_bid_ask else runner_stop
                         balance, trades = _record_exit(
                             trades,
                             equity_curve,
@@ -478,6 +1016,8 @@ def _run_backtest(
                             entry_index,
                         )
                         runner_pnl += trades[-1].pnl_usd
+                        num_runner_exits += 1
+                        num_runner_exits += 1
                         total_trades += 1
                         total_hold_bars += i - (entry_index or i)
                         position_side, entry_price, entry_ts, entry_index = None, None, None, None
@@ -487,10 +1027,33 @@ def _run_backtest(
                         long_peak = None
                         short_trough = None
                         mae_pips = 0.0
-                        continue
 
-        if signal and position_side is None:
-            entry_price, entry_ts = _entry_fill(candles, i, fill, signal, spread_price)
+        if magnifier_map is not None:
+            if signal and position_side is None and i + 1 <= max_index:
+                base_price, base_ts = _fill_price(candles, i, fill)
+                if use_bid_ask:
+                    entry_price = _entry_price(base_price, signal, spread_price)
+                else:
+                    entry_price = base_price
+                pending_entry = {
+                    "activate_index": i + 1,
+                    "entry_price": entry_price,
+                    "entry_ts": base_ts,
+                    "side": signal,
+                    "reason": "ENTRY",
+                }
+            if signal and position_side and signal != position_side and i + 1 <= max_index:
+                base_price, base_ts = _fill_price(candles, i, fill)
+                pending_flip = {
+                    "activate_index": i + 1,
+                    "base_price": base_price,
+                    "entry_ts": base_ts,
+                    "side": signal,
+                }
+        elif signal and position_side is None:
+            if tv_panel and last_entry_bar_ts == candle["time"]:
+                continue
+            entry_price, entry_ts = _entry_fill(candles, i, fill, signal, spread_price, use_bid_ask)
             entry_index = i
             position_side = signal
             position_units_opened = float(units)
@@ -511,16 +1074,24 @@ def _run_backtest(
                     leg="ENTRY",
                     reason="ENTRY",
                     pnl_pips=0.0,
+                    pnl_pips_weighted=0.0,
                     pnl_usd=0.0,
                     mae_pips=0.0,
                     equity=balance,
                     hold_bars=0,
                 )
             )
+            if position_side == "LONG":
+                num_entries_long += 1
+            else:
+                num_entries_short += 1
+            last_entry_bar_ts = candle["time"]
             continue
 
-        if signal and position_side and signal != position_side:
-            exit_price, exit_ts = _flip_exit_fill(candles, i, fill, position_side, spread_price)
+        if magnifier_map is None and signal and position_side and signal != position_side:
+            if tv_panel and last_entry_bar_ts == candle["time"]:
+                continue
+            exit_price, exit_ts = _flip_exit_fill(candles, i, fill, position_side, spread_price, use_bid_ask)
             balance, trades = _record_exit(
                 trades,
                 equity_curve,
@@ -541,7 +1112,7 @@ def _run_backtest(
             )
             total_trades += 1
             total_hold_bars += i - (entry_index or i)
-            entry_price, entry_ts = _entry_fill(candles, i, fill, signal, spread_price)
+            entry_price, entry_ts = _entry_fill(candles, i, fill, signal, spread_price, use_bid_ask)
             entry_index = i
             position_side = signal
             position_units_opened = float(units)
@@ -562,12 +1133,18 @@ def _run_backtest(
                     leg="ENTRY",
                     reason="FLIP_ENTRY",
                     pnl_pips=0.0,
+                    pnl_pips_weighted=0.0,
                     pnl_usd=0.0,
                     mae_pips=0.0,
                     equity=balance,
                     hold_bars=0,
                 )
             )
+            if position_side == "LONG":
+                num_entries_long += 1
+            else:
+                num_entries_short += 1
+            last_entry_bar_ts = candle["time"]
 
     avg_hold = (total_hold_bars / total_trades) if total_trades else 0.0
     tp1_pct = (tp1_hit_trades / total_trades * 100) if total_trades else 0.0
@@ -575,6 +1152,13 @@ def _run_backtest(
         "avg_hold_bars": avg_hold,
         "tp1_hit_pct": tp1_pct,
         "runner_pnl_usd": runner_pnl,
+        "num_ambiguous_bars": float(num_ambiguous_bars),
+        "num_same_bar_tp1_and_runner": float(num_same_bar_tp1_and_runner),
+        "num_stopouts": float(num_stopouts),
+        "entries_long": float(num_entries_long),
+        "entries_short": float(num_entries_short),
+        "runner_exits": float(num_runner_exits),
+        "tp1_hits": float(tp1_hit_trades),
     }
     return trades, equity_curve, metrics_extra
 
@@ -593,8 +1177,11 @@ def _entry_fill(
     fill: str,
     side: str,
     spread_price: float,
+    use_bid_ask: bool,
 ) -> tuple[float, str]:
     base_price, ts = _fill_price(candles, index, fill)
+    if not use_bid_ask:
+        return base_price, ts
     if side == "LONG":
         return base_price + spread_price / 2, ts
     return base_price - spread_price / 2, ts
@@ -606,8 +1193,11 @@ def _flip_exit_fill(
     fill: str,
     side: str,
     spread_price: float,
+    use_bid_ask: bool,
 ) -> tuple[float, str]:
     base_price, ts = _fill_price(candles, index, fill)
+    if not use_bid_ask:
+        return base_price, ts
     return _exit_price(base_price, side, spread_price), ts
 
 
@@ -617,6 +1207,12 @@ def _fill_price(candles: list[dict[str, Any]], index: int, fill: str) -> tuple[f
         return float(candle["c"]), candle["time"]
     candle = candles[index + 1]
     return float(candle["o"]), candle["time"]
+
+
+def _entry_price(price: float, side: str, spread_price: float) -> float:
+    if side == "LONG":
+        return price + spread_price / 2
+    return price - spread_price / 2
 
 
 def _exit_price(price: float, side: str, spread_price: float) -> float:
@@ -661,7 +1257,7 @@ def _record_exit(
     bar_index: int,
     entry_index: Optional[int],
 ) -> tuple[float, list[TradeResult]]:
-    pnl_pips, pnl_usd = _calc_pnl(
+    pnl_pips, pnl_pips_weighted, pnl_usd = _calc_pnl(
         entry_price,
         exit_price,
         side,
@@ -683,6 +1279,7 @@ def _record_exit(
             leg=leg,
             reason=reason,
             pnl_pips=pnl_pips,
+            pnl_pips_weighted=pnl_pips_weighted,
             pnl_usd=pnl_usd,
             mae_pips=mae_pips,
             equity=balance,
@@ -699,12 +1296,13 @@ def _calc_pnl(
     pip_factor: float,
     units: float,
     total_units: float,
-) -> tuple[float, float]:
+) -> tuple[float, float, float]:
     direction = 1 if side == "LONG" else -1
     raw_pips = (exit_price - entry_price) / pip_factor * direction
-    pnl_pips = raw_pips * (units / total_units) if total_units else 0.0
+    pnl_pips = raw_pips
+    pnl_pips_weighted = raw_pips * (units / total_units) if total_units else 0.0
     raw_usd = (exit_price - entry_price) * units * direction
-    return pnl_pips, raw_usd
+    return pnl_pips, pnl_pips_weighted, raw_usd
 
 
 def _update_mae(
@@ -739,7 +1337,8 @@ def _print_summary(
     avg_win = gross_profit / wins if wins else 0.0
     avg_loss = gross_loss / losses if losses else 0.0
     total_pnl = sum(t.pnl_usd for t in closed_trades)
-    total_pnl_pips = sum(t.pnl_pips for t in closed_trades)
+    total_pnl_pips = sum(t.pnl_pips_weighted for t in closed_trades)
+    total_pnl_pips_raw = sum(t.pnl_pips for t in closed_trades)
     max_dd = _max_drawdown([p.equity for p in equity])
     max_dd_pips = _max_drawdown(_equity_from_trades_pips(closed_trades))
     sharpe = _sharpe_ratio([t.pnl_usd for t in closed_trades])
@@ -751,11 +1350,16 @@ def _print_summary(
     print(f"Avg loss: {avg_loss:.4f} USD")
     print(f"Profit factor: {profit_factor:.4f}")
     print(f"Total PnL: {total_pnl:.4f} USD")
+    print(f"Total PnL (pips, weighted): {total_pnl_pips:.2f}")
+    print(f"Total PnL (pips, raw): {total_pnl_pips_raw:.2f}")
     print(f"Max drawdown: {max_dd:.4f} USD")
     print(f"Sharpe (per trade): {sharpe:.4f}")
     print(f"Avg hold bars: {extra.get('avg_hold_bars', 0):.2f}")
     print(f"TP1 hit rate: {extra.get('tp1_hit_pct', 0):.2f}%")
     print(f"Runner PnL: {extra.get('runner_pnl_usd', 0):.4f} USD")
+    print(f"Ambiguous bars: {extra.get('num_ambiguous_bars', 0):.0f}")
+    print(f"Same-bar TP1+runner: {extra.get('num_same_bar_tp1_and_runner', 0):.0f}")
+    print(f"Stopouts: {extra.get('num_stopouts', 0):.0f}")
 
     return {
         "total_trades": float(total),
@@ -763,13 +1367,21 @@ def _print_summary(
         "avg_win": avg_win,
         "avg_loss": avg_loss,
         "profit_factor": profit_factor,
-        "total_pnl_pips": total_pnl_pips,
+        "total_pnl_pips_weighted": total_pnl_pips,
+        "total_pnl_pips_raw": total_pnl_pips_raw,
         "total_pnl_usd": total_pnl,
         "max_drawdown_pips": max_dd_pips,
         "sharpe": sharpe,
         "avg_hold_bars": extra.get("avg_hold_bars", 0.0),
         "tp1_hit_pct": extra.get("tp1_hit_pct", 0.0),
         "runner_pnl_usd": extra.get("runner_pnl_usd", 0.0),
+        "num_ambiguous_bars": extra.get("num_ambiguous_bars", 0.0),
+        "num_same_bar_tp1_and_runner": extra.get("num_same_bar_tp1_and_runner", 0.0),
+        "num_stopouts": extra.get("num_stopouts", 0.0),
+        "entries_long": extra.get("entries_long", 0.0),
+        "entries_short": extra.get("entries_short", 0.0),
+        "runner_exits": extra.get("runner_exits", 0.0),
+        "tp1_hits": extra.get("tp1_hits", 0.0),
     }
 
 
@@ -800,6 +1412,7 @@ def _write_reports(
                 "leg",
                 "reason",
                 "pnl_pips",
+                "pnl_pips_weighted",
                 "pnl_usd",
                 "mae_pips",
                 "equity",
@@ -819,6 +1432,7 @@ def _write_reports(
                     trade.leg,
                     trade.reason,
                     f"{trade.pnl_pips:.2f}",
+                    f"{trade.pnl_pips_weighted:.2f}",
                     f"{trade.pnl_usd:.4f}",
                     f"{trade.mae_pips:.2f}",
                     f"{trade.equity:.4f}",
@@ -852,7 +1466,7 @@ def _equity_from_trades_pips(trades: list[TradeResult]) -> list[float]:
     equity = []
     running = 0.0
     for trade in trades:
-        running += trade.pnl_pips
+        running += trade.pnl_pips_weighted
         equity.append(running)
     return equity
 
@@ -897,14 +1511,43 @@ def _timeframe_to_minutes(timeframe: str) -> int:
     return mapping.get(timeframe.upper(), 15)
 
 
+def _timeframe_to_seconds(timeframe: str) -> int:
+    mapping = {
+        "S5": 5,
+        "S10": 10,
+        "S15": 15,
+        "S30": 30,
+        "M1": 60,
+        "M2": 120,
+        "M4": 240,
+        "M5": 300,
+        "M10": 600,
+        "M15": 900,
+        "M30": 1800,
+        "H1": 3600,
+        "H2": 7200,
+        "H3": 10800,
+        "H4": 14400,
+        "H6": 21600,
+        "H8": 28800,
+        "H12": 43200,
+        "D": 86400,
+    }
+    return mapping.get(timeframe.upper(), 900)
+
+
 def _resolve_date_range(days: int, from_date: Optional[str], to_date: Optional[str]) -> tuple[datetime, datetime]:
+    now_utc = datetime.now(timezone.utc)
+    safe_now = now_utc - timedelta(minutes=1)
     if from_date and to_date:
         from_dt = datetime.fromisoformat(from_date).replace(tzinfo=timezone.utc)
         to_dt = datetime.fromisoformat(to_date).replace(tzinfo=timezone.utc)
+        if to_dt > safe_now:
+            to_dt = safe_now
         if from_dt >= to_dt:
             raise SystemExit("--from must be earlier than --to")
         return from_dt, to_dt
-    to_dt = datetime.now(timezone.utc)
+    to_dt = safe_now
     from_dt = to_dt - timedelta(days=days)
     return from_dt, to_dt
 
@@ -917,5 +1560,140 @@ def _format_date(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d")
 
 
+def _parse_candle_time(candle: dict[str, Any]) -> datetime:
+    return datetime.fromisoformat(candle["time"].replace("Z", "+00:00")).astimezone(timezone.utc)
+
+
+def _print_config_table(
+    *,
+    exec_profile: str,
+    entry_timing: str,
+    entries_close_only: bool,
+    magnifier: str,
+    magnify_policy: str,
+    use_bid_ask: bool,
+    spread_effective: float,
+    bar_fill_policy: str,
+    parity_debug: bool,
+) -> None:
+    rows = [
+        ("Execution profile", exec_profile),
+        ("Entry timing", entry_timing),
+        ("Entries close-only", str(entries_close_only)),
+        ("Intrabar exits via M1", str(magnifier == "M1")),
+        ("Magnifier", magnifier),
+        ("Magnifier policy", magnify_policy),
+        ("Bid/ask used", str(use_bid_ask)),
+        ("Spread effective", f"{spread_effective}"),
+        ("Ambiguous policy", bar_fill_policy),
+        ("Parity debug", str(parity_debug)),
+    ]
+    width = max(len(label) for label, _ in rows)
+    print("Backtest Config")
+    for label, value in rows:
+        print(f"{label.ljust(width)} : {value}")
+    print("")
+
+
+def _write_parity_debug(
+    *,
+    symbol: str,
+    timeframe: str,
+    trades: list[TradeResult],
+    from_dt: datetime,
+    to_dt: datetime,
+) -> None:
+    reports_dir = Path("reports")
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    date_tag = datetime.now(timezone.utc).strftime("%Y%m%d")
+    out_path = reports_dir / f"parity_debug_{symbol}_{timeframe}_{date_tag}.csv"
+
+    rows: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    for trade in trades:
+        if trade.leg == "ENTRY":
+            if current:
+                rows.append(current)
+            current = {
+                "entry_time": trade.entry_ts,
+                "entry_price": trade.entry_price,
+                "side": trade.side,
+                "tp1_fill_time": "",
+                "tp1_fill_price": "",
+                "runner_exit_time": "",
+                "runner_exit_price": "",
+                "sl_time": "",
+                "sl_price": "",
+                "exit_reason": "",
+                "pnl_pips": 0.0,
+                "pnl_usd": 0.0,
+            }
+            continue
+        if not current:
+            continue
+        if trade.leg == "TP1":
+            current["tp1_fill_time"] = trade.exit_ts
+            current["tp1_fill_price"] = trade.exit_price
+            current["pnl_pips"] += trade.pnl_pips
+            current["pnl_usd"] += trade.pnl_usd
+        elif trade.leg == "RUNNER":
+            current["runner_exit_time"] = trade.exit_ts
+            current["runner_exit_price"] = trade.exit_price
+            current["exit_reason"] = trade.reason
+            current["pnl_pips"] += trade.pnl_pips
+            current["pnl_usd"] += trade.pnl_usd
+            rows.append(current)
+            current = None
+        elif trade.reason == "SL":
+            current["sl_time"] = trade.exit_ts
+            current["sl_price"] = trade.exit_price
+            current["exit_reason"] = trade.reason
+            current["pnl_pips"] += trade.pnl_pips
+            current["pnl_usd"] += trade.pnl_usd
+            rows.append(current)
+            current = None
+        else:
+            current["exit_reason"] = trade.reason
+            current["pnl_pips"] += trade.pnl_pips
+            current["pnl_usd"] += trade.pnl_usd
+            rows.append(current)
+            current = None
+
+    if current:
+        rows.append(current)
+
+    with out_path.open("w", newline="") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "entry_time",
+                "entry_price",
+                "side",
+                "tp1_fill_time",
+                "tp1_fill_price",
+                "runner_exit_time",
+                "runner_exit_price",
+                "sl_time",
+                "sl_price",
+                "exit_reason",
+                "pnl_pips",
+                "pnl_usd",
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 if __name__ == "__main__":
     main()
+
+# Example magnifier runs:
+# python -m app.backtest.run --symbol NZD_USD --timeframe M15 --days 10 --spread_pips 2.6 --units 1000 --magnify_tf M1 --magnify_policy conservative
+# python -m app.backtest.run --symbol NZD_USD --timeframe M15 --days 10 --spread_pips 2.6 --units 1000 --magnify_tf M1 --magnify_policy optimistic
+# Example TV parity runs:
+# python -m app.backtest.run --symbol NZD_USD --timeframe M15 --days 10 --units 1000 --spread_pips 2.6 --tv_parity true --magnify_policy conservative
+# python -m app.backtest.run --symbol NZD_USD --timeframe M15 --days 10 --units 1000 --spread_pips 2.6 --tv_parity true --magnify_policy optimistic
+# Example TV panel profile run:
+# python -m app.backtest.run --symbol NZD_USD --timeframe M15 --days 10 --units 1000 --spread_pips 2.6 --exec_profile tv_panel
+# Example live reality run with magnifier + bid/ask:
+# python -m app.backtest.run --symbol AUD_USD --timeframe M15 --days 30 --units 7000 --spread_pips 1.6 --exec_profile live_reality --magnifier m1 --use_bid_ask true
