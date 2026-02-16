@@ -77,8 +77,17 @@ class OakBridgeFxTraderV2(Strategy):
         )
 
         atr14 = (atr(candles, 14)[-1]) or 0.0
-        base_hi = highest(highs, ctx.config.base_max_bars)[-1]
-        base_lo = lowest(lows, ctx.config.base_max_bars)[-1]
+        # Continuation base must exclude the current bar; otherwise breakout checks are unreachable.
+        base_hi = (
+            highest(highs[:-1], ctx.config.base_max_bars)[-1]
+            if len(highs) > ctx.config.base_max_bars
+            else None
+        )
+        base_lo = (
+            lowest(lows[:-1], ctx.config.base_max_bars)[-1]
+            if len(lows) > ctx.config.base_max_bars
+            else None
+        )
         base_ok = (
             base_hi is not None
             and base_lo is not None
@@ -119,6 +128,7 @@ class OakBridgeFxTraderV2(Strategy):
             short_signal_ok=short_signal_ok,
             long_intent=long_intent,
             short_intent=short_intent,
+            hold_signal_bars=ctx.config.hold_signal_bars,
         )
 
         in_long = ctx.position.side == "LONG"
@@ -144,9 +154,34 @@ class OakBridgeFxTraderV2(Strategy):
 
         can_long = ok_time and ok_spread and long_signal_ok
         can_short = ok_time and ok_spread and short_signal_ok
+        pending_long = (
+            using_gate
+            and ok_time
+            and ok_spread
+            and state.pend_long
+            and state.pend_long_age <= ctx.config.hold_signal_bars
+            and long_intent
+        )
+        pending_short = (
+            using_gate
+            and ok_time
+            and ok_spread
+            and state.pend_short
+            and state.pend_short_age <= ctx.config.hold_signal_bars
+            and short_intent
+        )
+        can_long = can_long or pending_long
+        can_short = can_short or pending_short
         both = can_long and can_short
         take_long = can_long and (not both or spread_ema > 0)
         take_short = can_short and (not both or spread_ema < 0)
+
+        bars_since_entry = _bars_since_entry(candles, ctx.position.entry_ts)
+        min_hold_ok = (
+            ctx.position.side is None
+            or bars_since_entry is None
+            or bars_since_entry >= ctx.config.min_hold_bars
+        )
 
         second_chance_ok = (
             ctx.config.allow_second_chance
@@ -154,8 +189,8 @@ class OakBridgeFxTraderV2(Strategy):
             and (ctx.bar_index - (state.last_flat_index or ctx.bar_index)) <= ctx.config.reenter_within_bars
         )
 
-        want_long = take_long and (flat or in_short or second_chance_ok)
-        want_short = take_short and (flat or in_long or second_chance_ok)
+        want_long = take_long and (flat or second_chance_ok or (in_short and min_hold_ok))
+        want_short = take_short and (flat or second_chance_ok or (in_long and min_hold_ok))
 
         already_traded = state.last_trade_index == ctx.bar_index
         if not already_traded:
@@ -175,6 +210,10 @@ class OakBridgeFxTraderV2(Strategy):
                         short_tp1_done=False,
                         long_peak=None,
                         short_trough=None,
+                        pend_long=False,
+                        pend_short=False,
+                        pend_long_age=0,
+                        pend_short_age=0,
                     ),
                 )
             if want_short:
@@ -193,6 +232,10 @@ class OakBridgeFxTraderV2(Strategy):
                         short_tp1_done=False,
                         long_peak=None,
                         short_trough=None,
+                        pend_long=False,
+                        pend_short=False,
+                        pend_long_age=0,
+                        pend_short_age=0,
                     ),
                 )
 
@@ -236,8 +279,8 @@ def _handle_exits(
         short_trough = None
         if last.l <= long_sl and not long_tp1_done:
             return StrategyDecision(
-                "PARTIAL_TP1",
-                "tp1 stop loss",
+                "EXIT",
+                "stop loss",
                 {"stop": long_sl},
                 price=long_sl,
                 next_state=replace(
@@ -301,8 +344,8 @@ def _handle_exits(
         long_peak = None
         if last.h >= short_sl and not short_tp1_done:
             return StrategyDecision(
-                "PARTIAL_TP1",
-                "tp1 stop loss",
+                "EXIT",
+                "stop loss",
                 {"stop": short_sl},
                 price=short_sl,
                 next_state=replace(
@@ -539,6 +582,7 @@ def _update_pending_signals(
     short_signal_ok: bool,
     long_intent: bool,
     short_intent: bool,
+    hold_signal_bars: int,
 ) -> StrategyState:
     if not using_gate:
         return replace(state, pend_long=False, pend_short=False, pend_long_age=0, pend_short_age=0)
@@ -553,16 +597,18 @@ def _update_pending_signals(
         pend_long_age = 0
     elif pend_long:
         pend_long_age += 1
-        if not long_intent:
+        if not long_intent or pend_long_age > hold_signal_bars:
             pend_long = False
+            pend_long_age = 0
 
     if short_signal_ok and not ok_spread:
         pend_short = True
         pend_short_age = 0
     elif pend_short:
         pend_short_age += 1
-        if not short_intent:
+        if not short_intent or pend_short_age > hold_signal_bars:
             pend_short = False
+            pend_short_age = 0
 
     return replace(
         state,
@@ -587,5 +633,20 @@ def _is_eurcad(symbol: str) -> bool:
 
 
 def _parse_hhmm(value: str) -> time:
-    hour, minute = value.split(":")
+    token = value.strip()
+    if ":" in token:
+        hour, minute = token.split(":")
+    else:
+        if len(token) != 4 or not token.isdigit():
+            raise ValueError(f"Invalid HHMM value: {value}")
+        hour, minute = token[:2], token[2:]
     return time(int(hour), int(minute))
+
+
+def _bars_since_entry(candles: list[Candle], entry_ts: str | None) -> int | None:
+    if not entry_ts:
+        return None
+    for index, candle in enumerate(candles):
+        if candle.ts == entry_ts:
+            return len(candles) - 1 - index
+    return None

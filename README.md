@@ -129,6 +129,9 @@ Entry timing:
 Notes:
 - Backtests assume mid-price candles with a configurable spread cost via `--spread_pips`.
 - TP/SL fills are simulated at the level using candle high/low.
+- Backtests cache candles locally by default in `data/candles_cache.db` (SQLite) to speed repeat runs.
+- Use `--refresh_cache` to force refetch from OANDA for the requested window.
+- Use `--no_cache` to bypass local cache for a run.
 
 Live-reality backtests with M1 magnifier + bid/ask modeling:
 
@@ -166,6 +169,26 @@ Notes:
 - `--bar_fill_policy=optimistic` assumes TP1 hits before SL in the same candle and can allow same-bar TP1 + runner stops.
 - Spread is modeled as half-spread on entry and exit.
 - TP1 closes `tp1_close_pct` of units and the runner uses trailing + BE after TP1.
+
+## Trade Diagnostics
+
+Analyze the latest backtest trades and generate actionable diagnostics:
+
+```bash
+python -m app.backtest.diagnostics
+```
+
+Optional arguments:
+- `--trades_csv reports/backtest_trades_AUD_USD_M15_20260215.csv`
+- `--with_candles true|false` (default `true`)
+
+Output:
+- JSON report written to `reports/diagnostics_<SYMBOL>_<TF>_<RUNID>.json`
+- Console summary with top recommendations
+
+When `--with_candles=true`, diagnostics will fetch OANDA candles for the backtest window and include:
+- trend-aligned vs counter-trend entry performance (EMA-50 context)
+- performance by entry volatility regime (range percentile)
 
 ## Porting TradingView Strategies
 

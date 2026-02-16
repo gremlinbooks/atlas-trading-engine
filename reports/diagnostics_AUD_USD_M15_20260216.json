@@ -1,0 +1,473 @@
+{
+  "source": {
+    "trades_csv": "reports/backtest_trades_AUD_USD_M15_20260216.csv",
+    "symbol": "AUD_USD",
+    "timeframe": "M15",
+    "run_id": "20260216"
+  },
+  "overall": {
+    "count": 355,
+    "win_rate_pct": 58.028169014084504,
+    "total_pnl_usd": 1.8,
+    "avg_win_usd": 0.753107,
+    "avg_loss_usd": -1.043129,
+    "profit_factor": 1.011739,
+    "avg_hold_bars": 16.2225,
+    "avg_mae_pips": -9.5513
+  },
+  "by_exit_reason": {
+    "FLIP": {
+      "count": 222,
+      "win_rate_pct": 44.1441,
+      "pnl_usd": -31.46,
+      "avg_pnl_usd": -0.141712,
+      "avg_hold_bars": 19.1081,
+      "avg_mae_pips": -9.1009,
+      "wins": 98,
+      "losses": 122
+    },
+    "RUNNER_STOP": {
+      "count": 54,
+      "win_rate_pct": 100.0,
+      "pnl_usd": 73.332,
+      "avg_pnl_usd": 1.358,
+      "avg_hold_bars": 10.4074,
+      "avg_mae_pips": -5.7685,
+      "wins": 54,
+      "losses": 0
+    },
+    "TP1": {
+      "count": 54,
+      "win_rate_pct": 100.0,
+      "pnl_usd": 31.428,
+      "avg_pnl_usd": 0.582,
+      "avg_hold_bars": 10.4074,
+      "avg_mae_pips": -5.7685,
+      "wins": 54,
+      "losses": 0
+    },
+    "SL": {
+      "count": 25,
+      "win_rate_pct": 0.0,
+      "pnl_usd": -71.5,
+      "avg_pnl_usd": -2.86,
+      "avg_hold_bars": 15.72,
+      "avg_mae_pips": -29.892,
+      "wins": 0,
+      "losses": 25
+    }
+  },
+  "by_leg": {
+    "EXIT": {
+      "count": 247,
+      "win_rate_pct": 39.6761,
+      "pnl_usd": -102.96,
+      "avg_pnl_usd": -0.416842,
+      "avg_hold_bars": 18.7652,
+      "avg_mae_pips": -11.2053,
+      "wins": 98,
+      "losses": 147
+    },
+    "RUNNER": {
+      "count": 54,
+      "win_rate_pct": 100.0,
+      "pnl_usd": 73.332,
+      "avg_pnl_usd": 1.358,
+      "avg_hold_bars": 10.4074,
+      "avg_mae_pips": -5.7685,
+      "wins": 54,
+      "losses": 0
+    },
+    "TP1": {
+      "count": 54,
+      "win_rate_pct": 100.0,
+      "pnl_usd": 31.428,
+      "avg_pnl_usd": 0.582,
+      "avg_hold_bars": 10.4074,
+      "avg_mae_pips": -5.7685,
+      "wins": 54,
+      "losses": 0
+    }
+  },
+  "by_entry_origin": {
+    "FLIP_ENTRY": {
+      "count": 248,
+      "win_rate_pct": 54.0323,
+      "pnl_usd": -7.99,
+      "avg_pnl_usd": -0.032218,
+      "avg_hold_bars": 17.3952,
+      "avg_mae_pips": -8.975,
+      "wins": 134,
+      "losses": 112
+    },
+    "ENTRY": {
+      "count": 107,
+      "win_rate_pct": 67.2897,
+      "pnl_usd": 9.79,
+      "avg_pnl_usd": 0.091495,
+      "avg_hold_bars": 13.5047,
+      "avg_mae_pips": -10.8869,
+      "wins": 72,
+      "losses": 35
+    }
+  },
+  "by_entry_hour_utc": {
+    "2": {
+      "count": 28,
+      "win_rate_pct": 57.1429,
+      "pnl_usd": -4.97,
+      "avg_pnl_usd": -0.1775,
+      "avg_hold_bars": 13.7143,
+      "avg_mae_pips": -11.7036,
+      "wins": 16,
+      "losses": 12
+    },
+    "11": {
+      "count": 21,
+      "win_rate_pct": 71.4286,
+      "pnl_usd": 6.09,
+      "avg_pnl_usd": 0.29,
+      "avg_hold_bars": 12.0476,
+      "avg_mae_pips": -8.0714,
+      "wins": 15,
+      "losses": 6
+    },
+    "12": {
+      "count": 21,
+      "win_rate_pct": 66.6667,
+      "pnl_usd": 5.43,
+      "avg_pnl_usd": 0.258571,
+      "avg_hold_bars": 15.0476,
+      "avg_mae_pips": -11.219,
+      "wins": 14,
+      "losses": 7
+    },
+    "21": {
+      "count": 21,
+      "win_rate_pct": 61.9048,
+      "pnl_usd": -0.52,
+      "avg_pnl_usd": -0.024762,
+      "avg_hold_bars": 16.6667,
+      "avg_mae_pips": -7.5619,
+      "wins": 13,
+      "losses": 8
+    },
+    "17": {
+      "count": 19,
+      "win_rate_pct": 52.6316,
+      "pnl_usd": -2.76,
+      "avg_pnl_usd": -0.145263,
+      "avg_hold_bars": 15.8421,
+      "avg_mae_pips": -11.5053,
+      "wins": 10,
+      "losses": 9
+    },
+    "15": {
+      "count": 18,
+      "win_rate_pct": 61.1111,
+      "pnl_usd": -0.74,
+      "avg_pnl_usd": -0.041111,
+      "avg_hold_bars": 21.2222,
+      "avg_mae_pips": -9.6444,
+      "wins": 11,
+      "losses": 7
+    },
+    "22": {
+      "count": 18,
+      "win_rate_pct": 61.1111,
+      "pnl_usd": 6.32,
+      "avg_pnl_usd": 0.351111,
+      "avg_hold_bars": 15.2222,
+      "avg_mae_pips": -8.9722,
+      "wins": 11,
+      "losses": 7
+    },
+    "1": {
+      "count": 16,
+      "win_rate_pct": 62.5,
+      "pnl_usd": -1.7,
+      "avg_pnl_usd": -0.10625,
+      "avg_hold_bars": 22.0625,
+      "avg_mae_pips": -10.525,
+      "wins": 10,
+      "losses": 6
+    },
+    "13": {
+      "count": 16,
+      "win_rate_pct": 68.75,
+      "pnl_usd": 1.2,
+      "avg_pnl_usd": 0.075,
+      "avg_hold_bars": 13.875,
+      "avg_mae_pips": -9.8125,
+      "wins": 11,
+      "losses": 5
+    },
+    "14": {
+      "count": 16,
+      "win_rate_pct": 68.75,
+      "pnl_usd": 0.46,
+      "avg_pnl_usd": 0.02875,
+      "avg_hold_bars": 11.375,
+      "avg_mae_pips": -11.325,
+      "wins": 11,
+      "losses": 5
+    },
+    "23": {
+      "count": 15,
+      "win_rate_pct": 60.0,
+      "pnl_usd": 1.41,
+      "avg_pnl_usd": 0.094,
+      "avg_hold_bars": 13.8667,
+      "avg_mae_pips": -7.7533,
+      "wins": 9,
+      "losses": 6
+    },
+    "5": {
+      "count": 15,
+      "win_rate_pct": 40.0,
+      "pnl_usd": -4.62,
+      "avg_pnl_usd": -0.308,
+      "avg_hold_bars": 17.8,
+      "avg_mae_pips": -10.5133,
+      "wins": 6,
+      "losses": 9
+    },
+    "7": {
+      "count": 15,
+      "win_rate_pct": 46.6667,
+      "pnl_usd": 1.0,
+      "avg_pnl_usd": 0.066667,
+      "avg_hold_bars": 17.8667,
+      "avg_mae_pips": -10.36,
+      "wins": 7,
+      "losses": 7
+    },
+    "9": {
+      "count": 15,
+      "win_rate_pct": 53.3333,
+      "pnl_usd": -0.55,
+      "avg_pnl_usd": -0.036667,
+      "avg_hold_bars": 21,
+      "avg_mae_pips": -11.04,
+      "wins": 8,
+      "losses": 6
+    },
+    "18": {
+      "count": 14,
+      "win_rate_pct": 42.8571,
+      "pnl_usd": -5.92,
+      "avg_pnl_usd": -0.422857,
+      "avg_hold_bars": 14.9286,
+      "avg_mae_pips": -11.7571,
+      "wins": 6,
+      "losses": 8
+    },
+    "16": {
+      "count": 12,
+      "win_rate_pct": 50.0,
+      "pnl_usd": 0.81,
+      "avg_pnl_usd": 0.0675,
+      "avg_hold_bars": 17.5,
+      "avg_mae_pips": -8.3083,
+      "wins": 6,
+      "losses": 6
+    },
+    "6": {
+      "count": 12,
+      "win_rate_pct": 50.0,
+      "pnl_usd": -2.57,
+      "avg_pnl_usd": -0.214167,
+      "avg_hold_bars": 17.25,
+      "avg_mae_pips": -11.7917,
+      "wins": 6,
+      "losses": 6
+    },
+    "10": {
+      "count": 11,
+      "win_rate_pct": 72.7273,
+      "pnl_usd": 2.99,
+      "avg_pnl_usd": 0.271818,
+      "avg_hold_bars": 14.9091,
+      "avg_mae_pips": -7.0636,
+      "wins": 8,
+      "losses": 3
+    },
+    "4": {
+      "count": 11,
+      "win_rate_pct": 72.7273,
+      "pnl_usd": 6.4,
+      "avg_pnl_usd": 0.581818,
+      "avg_hold_bars": 15.7273,
+      "avg_mae_pips": -4.7455,
+      "wins": 8,
+      "losses": 3
+    },
+    "8": {
+      "count": 10,
+      "win_rate_pct": 40.0,
+      "pnl_usd": -0.92,
+      "avg_pnl_usd": -0.092,
+      "avg_hold_bars": 15.8,
+      "avg_mae_pips": -7.35,
+      "wins": 4,
+      "losses": 6
+    },
+    "0": {
+      "count": 8,
+      "win_rate_pct": 75.0,
+      "pnl_usd": 2.45,
+      "avg_pnl_usd": 0.30625,
+      "avg_hold_bars": 10.375,
+      "avg_mae_pips": -5.6125,
+      "wins": 6,
+      "losses": 2
+    },
+    "20": {
+      "count": 8,
+      "win_rate_pct": 37.5,
+      "pnl_usd": -1.85,
+      "avg_pnl_usd": -0.23125,
+      "avg_hold_bars": 17.75,
+      "avg_mae_pips": -6.95,
+      "wins": 3,
+      "losses": 5
+    },
+    "3": {
+      "count": 8,
+      "win_rate_pct": 37.5,
+      "pnl_usd": -4.14,
+      "avg_pnl_usd": -0.5175,
+      "avg_hold_bars": 24,
+      "avg_mae_pips": -11.2625,
+      "wins": 3,
+      "losses": 5
+    },
+    "19": {
+      "count": 7,
+      "win_rate_pct": 57.1429,
+      "pnl_usd": -1.5,
+      "avg_pnl_usd": -0.214286,
+      "avg_hold_bars": 20.8571,
+      "avg_mae_pips": -6.2857,
+      "wins": 4,
+      "losses": 3
+    }
+  },
+  "by_entry_weekday_utc": {
+    "4": {
+      "count": 76,
+      "win_rate_pct": 56.5789,
+      "pnl_usd": -9.11,
+      "avg_pnl_usd": -0.119868,
+      "avg_hold_bars": 14.3947,
+      "avg_mae_pips": -9.7105,
+      "wins": 43,
+      "losses": 32
+    },
+    "2": {
+      "count": 75,
+      "win_rate_pct": 68.0,
+      "pnl_usd": 15.51,
+      "avg_pnl_usd": 0.2068,
+      "avg_hold_bars": 15.9467,
+      "avg_mae_pips": -8.708,
+      "wins": 51,
+      "losses": 24
+    },
+    "1": {
+      "count": 68,
+      "win_rate_pct": 64.7059,
+      "pnl_usd": 4.2,
+      "avg_pnl_usd": 0.061765,
+      "avg_hold_bars": 17.3824,
+      "avg_mae_pips": -9.9059,
+      "wins": 44,
+      "losses": 24
+    },
+    "0": {
+      "count": 65,
+      "win_rate_pct": 49.2308,
+      "pnl_usd": -3.91,
+      "avg_pnl_usd": -0.060154,
+      "avg_hold_bars": 19.6615,
+      "avg_mae_pips": -9.3477,
+      "wins": 32,
+      "losses": 32
+    },
+    "3": {
+      "count": 63,
+      "win_rate_pct": 49.2063,
+      "pnl_usd": -6.41,
+      "avg_pnl_usd": -0.101746,
+      "avg_hold_bars": 14.4921,
+      "avg_mae_pips": -10.3175,
+      "wins": 31,
+      "losses": 32
+    },
+    "6": {
+      "count": 8,
+      "win_rate_pct": 62.5,
+      "pnl_usd": 1.52,
+      "avg_pnl_usd": 0.19,
+      "avg_hold_bars": 12,
+      "avg_mae_pips": -8.55,
+      "wins": 5,
+      "losses": 3
+    }
+  },
+  "stopouts": {
+    "count": 25,
+    "pct_of_all_closed_legs": 7.0423,
+    "total_pnl_usd": -71.5,
+    "avg_pnl_usd": -2.86,
+    "by_entry_origin": {
+      "FLIP_ENTRY": {
+        "count": 15,
+        "win_rate_pct": 0.0,
+        "pnl_usd": -42.9,
+        "avg_pnl_usd": -2.86,
+        "avg_hold_bars": 18.6667,
+        "avg_mae_pips": -28.4067,
+        "wins": 0,
+        "losses": 15
+      },
+      "ENTRY": {
+        "count": 10,
+        "win_rate_pct": 0.0,
+        "pnl_usd": -28.6,
+        "avg_pnl_usd": -2.86,
+        "avg_hold_bars": 11.3,
+        "avg_mae_pips": -32.12,
+        "wins": 0,
+        "losses": 10
+      }
+    },
+    "top_exit_hours_utc": [
+      {
+        "hour": 15,
+        "count": 5
+      },
+      {
+        "hour": 3,
+        "count": 3
+      },
+      {
+        "hour": 16,
+        "count": 3
+      },
+      {
+        "hour": 6,
+        "count": 2
+      },
+      {
+        "hour": 14,
+        "count": 2
+      }
+    ]
+  },
+  "recommendations": [
+    "Flip-origin trades are net negative. Increase STRATEGY_MIN_HOLD_BARS and keep STRATEGY_ALLOW_SECOND_CHANCE=false.",
+    "Loss magnitude dominates wins. Increase TP1_CLOSE_PCT or tighten reversal/flip entries to reduce large losers.",
+    "Entry-hour underperformance detected around UTC 18:00, 02:00, 05:00. Consider blocking these sessions via STRATEGY_BLOCK_SESSION."
+  ]
+}

@@ -9,6 +9,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, List, Optional
 
+import requests
+
+from app.backtest.candle_cache import CandleCache
 from app.broker.oanda import OandaClient
 from app.config import get_settings
 from app.engine.strategy_base import (
@@ -135,6 +138,8 @@ def main() -> None:
         timeframe=args.timeframe,
         from_dt=from_dt,
         to_dt=to_dt,
+        cache=None if args.no_cache else CandleCache(Path(args.cache_db)),
+        refresh_cache=args.refresh_cache,
     )
     if len(candles) < 2:
         raise SystemExit("Not enough candles returned for backtest")
@@ -147,6 +152,8 @@ def main() -> None:
             timeframe=args.magnify_tf,
             from_dt=from_dt,
             to_dt=to_dt,
+            cache=None if args.no_cache else CandleCache(Path(args.cache_db)),
+            refresh_cache=args.refresh_cache,
         )
 
     effective_fill = args.fill
@@ -241,6 +248,8 @@ def main() -> None:
             "exec_profile": args.exec_profile,
             "magnifier": args.magnifier,
             "parity_debug": args.parity_debug,
+            "cache_db": None if args.no_cache else args.cache_db,
+            "refresh_cache": args.refresh_cache,
         },
         metrics=metrics,
     )
@@ -293,6 +302,9 @@ def _parse_args() -> argparse.Namespace:
         default="live_reality",
     )
     parser.add_argument("--parity_debug", type=_parse_bool, default=False)
+    parser.add_argument("--no_cache", action="store_true")
+    parser.add_argument("--refresh_cache", action="store_true")
+    parser.add_argument("--cache_db", default="data/candles_cache.db")
     return parser.parse_args()
 
 
@@ -307,30 +319,96 @@ def _fetch_candles(
     timeframe: str,
     from_dt: datetime,
     to_dt: datetime,
+    cache: CandleCache | None = None,
+    refresh_cache: bool = False,
 ) -> list[dict[str, Any]]:
     timeframe_minutes = _timeframe_to_minutes(timeframe)
     chunk_minutes = 5000 * timeframe_minutes
     all_candles: dict[str, dict[str, Any]] = {}
+    missing_windows: list[tuple[datetime, datetime]] = [(from_dt, to_dt)]
 
-    current = from_dt
-    while current < to_dt:
-        chunk_to = min(current + timedelta(minutes=chunk_minutes), to_dt)
-        batch = client.get_candles_range(
+    if cache and not refresh_cache:
+        cached = cache.load_range(
             symbol=symbol,
-            granularity=timeframe,
-            from_ts=_to_rfc3339(current),
-            to_ts=_to_rfc3339(chunk_to),
-            count=None,
-            include_first=True,
+            timeframe=timeframe,
+            from_dt=from_dt,
+            to_dt=to_dt,
         )
-        for candle in batch:
+        for candle in cached:
             all_candles[candle["time"]] = candle
-        print(
-            f"fetching candles chunk: {_format_date(current)} -> {_format_date(chunk_to)} (n={len(batch)})"
+        missing_windows = _missing_windows(
+            from_dt=from_dt,
+            to_dt=to_dt,
+            timeframe=timeframe,
+            cached_candles=cached,
         )
-        current = chunk_to
+        print(
+            f"cache status: symbol={symbol} timeframe={timeframe} "
+            f"cached={len(cached)} missing_windows={len(missing_windows)}"
+        )
+    elif cache and refresh_cache:
+        print(f"cache refresh enabled: symbol={symbol} timeframe={timeframe}")
+
+    for window_from, window_to in missing_windows:
+        current = window_from
+        while current < window_to:
+            chunk_to = min(current + timedelta(minutes=chunk_minutes), window_to)
+            try:
+                batch = client.get_candles_range(
+                    symbol=symbol,
+                    granularity=timeframe,
+                    from_ts=_to_rfc3339(current),
+                    to_ts=_to_rfc3339(chunk_to),
+                    count=None,
+                    include_first=True,
+                )
+            except requests.RequestException as exc:
+                raise SystemExit(
+                    "Failed to fetch candles from OANDA. "
+                    f"symbol={symbol}, timeframe={timeframe}, "
+                    f"window={_format_date(current)}->{_format_date(chunk_to)}. "
+                    "Check internet/DNS access and OANDA API settings."
+                ) from exc
+            if cache and batch:
+                cache.upsert(symbol=symbol, timeframe=timeframe, candles=batch)
+            for candle in batch:
+                all_candles[candle["time"]] = candle
+            print(
+                f"fetching candles chunk: {_format_date(current)} -> {_format_date(chunk_to)} (n={len(batch)})"
+            )
+            current = chunk_to
 
     return [all_candles[k] for k in sorted(all_candles)]
+
+
+def _missing_windows(
+    *,
+    from_dt: datetime,
+    to_dt: datetime,
+    timeframe: str,
+    cached_candles: list[dict[str, Any]],
+) -> list[tuple[datetime, datetime]]:
+    if not cached_candles:
+        return [(from_dt, to_dt)]
+
+    step = timedelta(seconds=_timeframe_to_seconds(timeframe))
+    cached_times = sorted(_parse_candle_time(c) for c in cached_candles)
+    windows: list[tuple[datetime, datetime]] = []
+
+    first = cached_times[0]
+    if first - from_dt > step:
+        windows.append((from_dt, first))
+
+    for prev, current in zip(cached_times, cached_times[1:]):
+        expected_next = prev + step
+        if current - expected_next > step / 2:
+            windows.append((expected_next, current))
+
+    last = cached_times[-1]
+    if to_dt - last > step:
+        windows.append((last + step, to_dt))
+
+    return [(w_from, w_to) for w_from, w_to in windows if w_from < w_to]
 
 
 def _build_magnifier_map(
@@ -742,6 +820,7 @@ def _run_backtest(
                                 entry_index,
                             )
                             runner_pnl += trades[-1].pnl_usd
+                            num_runner_exits += 1
                             total_trades += 1
                             total_hold_bars += i - (entry_index or i)
                             position_side, entry_price, entry_ts, entry_index = None, None, None, None
@@ -789,6 +868,7 @@ def _run_backtest(
                                 entry_index,
                             )
                             runner_pnl += trades[-1].pnl_usd
+                            num_runner_exits += 1
                             total_trades += 1
                             total_hold_bars += i - (entry_index or i)
                             position_side, entry_price, entry_ts, entry_index = None, None, None, None
@@ -966,7 +1046,6 @@ def _run_backtest(
                         )
                         runner_pnl += trades[-1].pnl_usd
                         num_runner_exits += 1
-                        num_runner_exits += 1
                         total_trades += 1
                         total_hold_bars += i - (entry_index or i)
                         position_side, entry_price, entry_ts, entry_index = None, None, None, None
@@ -1016,7 +1095,6 @@ def _run_backtest(
                             entry_index,
                         )
                         runner_pnl += trades[-1].pnl_usd
-                        num_runner_exits += 1
                         num_runner_exits += 1
                         total_trades += 1
                         total_hold_bars += i - (entry_index or i)
