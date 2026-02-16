@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, time, timezone
+import re
 from typing import Any
 
 from app.engine.indicators import (
@@ -535,7 +536,7 @@ def _ok_time(ts: str, config) -> bool:
         return True
     if not config.block_trades:
         return True
-    dt = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(timezone.utc)
+    dt = _parse_iso_ts(ts).astimezone(timezone.utc)
     if config.use_day_mask:
         weekday = dt.weekday()
         day_blocked = {
@@ -561,6 +562,12 @@ def _ok_time(ts: str, config) -> bool:
             in_block = now >= start or now <= end
         return not in_block
     return True
+
+
+def _parse_iso_ts(ts: str) -> datetime:
+    token = ts.replace("Z", "+00:00")
+    token = re.sub(r"\.(\d{6})\d+(?=[+-]\d{2}:\d{2}$)", r".\1", token)
+    return datetime.fromisoformat(token)
 
 
 def _ok_spread(ctx: StrategyContext, config) -> tuple[bool, bool]:

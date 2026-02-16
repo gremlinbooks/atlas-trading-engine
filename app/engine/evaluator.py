@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+import re
 from typing import Any, Optional
 
 from app.broker.oanda import OandaClient
@@ -471,4 +472,6 @@ def _timeframe_to_seconds(timeframe: str) -> int:
 
 
 def _iso_to_epoch_seconds(ts: str) -> float:
-    return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    token = ts.replace("Z", "+00:00")
+    token = re.sub(r"\.(\d{6})\d+(?=[+-]\d{2}:\d{2}$)", r".\1", token)
+    return datetime.fromisoformat(token).timestamp()
