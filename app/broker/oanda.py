@@ -38,6 +38,18 @@ class OandaClient:
         resp.raise_for_status()
         return resp.json()
 
+    def get_account_instruments(self, symbols: List[str]) -> Dict[str, Any]:
+        instruments = ",".join(symbols)
+        url = f"{self.base_url}/v3/accounts/{self.account_id}/instruments"
+        resp = requests.get(
+            url,
+            headers=self._headers(),
+            params={"instruments": instruments},
+            timeout=20,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def get_pricing(self, symbols: List[str]) -> Dict[str, Any]:
         instruments = ",".join(symbols)
         url = f"{self.base_url}/v3/accounts/{self.account_id}/pricing"

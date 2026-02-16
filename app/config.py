@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     candle_count: int = Field(default=200, alias="CANDLE_COUNT")
     candle_poll_seconds: int = Field(default=30, alias="CANDLE_POLL_SECONDS")
     default_units: int = Field(default=1000, alias="DEFAULT_UNITS")
+    margin_usage_pct: float = Field(default=0.0, alias="MARGIN_USAGE_PCT")
     force_signal: Optional[str] = Field(default=None, alias="FORCE_SIGNAL")
     strategy_name: str = Field(default="oakbridge_fxtrader_v2", alias="STRATEGY_NAME")
     strategy_enabled: bool = Field(default=False, alias="STRATEGY_ENABLED")
@@ -82,6 +83,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_oanda(self) -> "Settings":
+        if not (0.0 <= self.margin_usage_pct <= 100.0):
+            raise ValueError("MARGIN_USAGE_PCT must be between 0 and 100")
         if self.force_signal:
             forced = self.force_signal.upper()
             if forced not in {"LONG", "SHORT", "HOLD"}:

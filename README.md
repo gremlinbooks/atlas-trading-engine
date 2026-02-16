@@ -30,6 +30,7 @@ Phase 2 candle settings (defaults shown in `.env.example`):
 - `CANDLE_COUNT` (default `200`)
 - `CANDLE_POLL_SECONDS` (default `30`)
 - `DEFAULT_UNITS` (default `1000`)
+- `MARGIN_USAGE_PCT` (default `0`; when `>0`, auto-sizes each new order to that percent of current `marginAvailable`)
 - `STRATEGY_NAME` (default `oakbridge_fxtrader_v2`)
 - `STRATEGY_ENABLED` (default `false`)
 - `STRATEGY_MIN_HOLD_BARS` (default `3`)

@@ -345,11 +345,12 @@ class Evaluator:
             return "ALREADY_EXECUTED"
 
         intent_id = f"{symbol}-{candle_ts}"
+        order_units_abs = self._resolve_order_units(symbol=symbol, signal=signal) if signal in {"LONG", "SHORT"} else 0
         insert_trade_intent(
             intent_id=intent_id,
             symbol=symbol,
             side=signal if signal in {"LONG", "SHORT"} else "EXIT",
-            units=float(self.settings.default_units) if signal in {"LONG", "SHORT"} else 0.0,
+            units=float(order_units_abs),
             status="PENDING",
             idempotency_key=idempotency_key,
             reason="strategy signal",
@@ -379,7 +380,7 @@ class Evaluator:
                     return "EXECUTION_FAILED"
                 response = client.close_trade(position_trade_id)
             else:
-                units = self.settings.default_units if signal == "LONG" else -abs(self.settings.default_units)
+                units = order_units_abs if signal == "LONG" else -abs(order_units_abs)
                 response = client.place_market_order(symbol, units)
         except Exception as exc:  # noqa: BLE001
             update_trade_intent(
@@ -408,6 +409,59 @@ class Evaluator:
             trade_id=trade_id,
         )
         return action
+
+    def _resolve_order_units(self, *, symbol: str, signal: str) -> int:
+        default_units = abs(int(self.settings.default_units))
+        margin_pct = float(self.settings.margin_usage_pct)
+        if margin_pct <= 0:
+            return default_units
+
+        client = self._get_client()
+        try:
+            summary = client.get_account_summary().get("account", {})
+            margin_available = float(summary.get("marginAvailable", 0.0))
+            if margin_available <= 0:
+                raise ValueError("marginAvailable is not positive")
+
+            pricing = client.get_pricing([symbol])
+            prices = pricing.get("prices", [])
+            if not prices:
+                raise ValueError(f"no pricing for {symbol}")
+            price_payload = prices[0]
+            bids = price_payload.get("bids", [])
+            asks = price_payload.get("asks", [])
+            if not bids or not asks:
+                raise ValueError(f"missing bid/ask for {symbol}")
+            bid = float(bids[0]["price"])
+            ask = float(asks[0]["price"])
+            side_price = ask if signal == "LONG" else bid
+            if side_price <= 0:
+                raise ValueError("invalid side price")
+
+            account_instruments = client.get_account_instruments([symbol])
+            instruments = account_instruments.get("instruments", [])
+            if not instruments:
+                raise ValueError(f"no instrument metadata for {symbol}")
+            margin_rate = float(instruments[0].get("marginRate", 0.0))
+            if margin_rate <= 0:
+                raise ValueError("invalid marginRate")
+
+            target_margin = margin_available * (margin_pct / 100.0)
+            computed_units = int(target_margin / (side_price * margin_rate))
+            if computed_units <= 0:
+                raise ValueError("computed units <= 0")
+
+            return computed_units
+        except Exception as exc:  # noqa: BLE001
+            log_event(
+                execution_logger,
+                "margin_sizing_fallback",
+                symbol=symbol,
+                margin_usage_pct=margin_pct,
+                default_units=default_units,
+                error=str(exc),
+            )
+            return default_units
 
     def _get_client(self) -> OandaClient:
         if self.client is None:
