@@ -320,6 +320,17 @@ def _handle_exits(
             long_trail_candidate = long_peak * (1 - trail_frac)
             long_be = avg + ctx.config.be_lock_pips * pip
             long_runner_stop = max(long_be, long_trail_candidate)
+            long_runner_stop = _apply_profit_floor_stop(
+                side=ctx.position.side,
+                entry_price=avg,
+                runner_stop=long_runner_stop,
+                favorable_extreme=long_peak,
+                pip_factor=pip,
+                trigger1_pips=ctx.config.profit_floor1_trigger_pips,
+                lock1_pips=ctx.config.profit_floor1_lock_pips,
+                trigger2_pips=ctx.config.profit_floor2_trigger_pips,
+                lock2_pips=ctx.config.profit_floor2_lock_pips,
+            )
             if ctx.config.use_stoch_exit and st_meta.get("stKxDn") and (st_k or 0) > ctx.config.st_ob:
                 tight = last.c - ctx.config.st_tight_pips * pip
                 long_runner_stop = max(long_runner_stop, tight)
@@ -385,6 +396,17 @@ def _handle_exits(
             short_trail_candidate = short_trough * (1 + trail_frac)
             short_be = avg - ctx.config.be_lock_pips * pip
             short_runner_stop = min(short_be, short_trail_candidate)
+            short_runner_stop = _apply_profit_floor_stop(
+                side=ctx.position.side,
+                entry_price=avg,
+                runner_stop=short_runner_stop,
+                favorable_extreme=short_trough,
+                pip_factor=pip,
+                trigger1_pips=ctx.config.profit_floor1_trigger_pips,
+                lock1_pips=ctx.config.profit_floor1_lock_pips,
+                trigger2_pips=ctx.config.profit_floor2_trigger_pips,
+                lock2_pips=ctx.config.profit_floor2_lock_pips,
+            )
             if ctx.config.use_stoch_exit and st_meta.get("stKxUp") and (st_k or 0) < ctx.config.st_os:
                 tight = last.c + ctx.config.st_tight_pips * pip
                 short_runner_stop = min(short_runner_stop, tight)
@@ -419,6 +441,34 @@ def _handle_exits(
             short_trough=short_trough,
         ),
     )
+
+
+def _apply_profit_floor_stop(
+    *,
+    side: str | None,
+    entry_price: float,
+    runner_stop: float,
+    favorable_extreme: float,
+    pip_factor: float,
+    trigger1_pips: int,
+    lock1_pips: int,
+    trigger2_pips: int,
+    lock2_pips: int,
+) -> float:
+    if side == "LONG":
+        mfe_pips = (favorable_extreme - entry_price) / pip_factor
+        if trigger2_pips > 0 and mfe_pips >= trigger2_pips:
+            return max(runner_stop, entry_price + lock2_pips * pip_factor)
+        if trigger1_pips > 0 and mfe_pips >= trigger1_pips:
+            return max(runner_stop, entry_price + lock1_pips * pip_factor)
+        return runner_stop
+
+    mfe_pips = (entry_price - favorable_extreme) / pip_factor
+    if trigger2_pips > 0 and mfe_pips >= trigger2_pips:
+        return min(runner_stop, entry_price - lock2_pips * pip_factor)
+    if trigger1_pips > 0 and mfe_pips >= trigger1_pips:
+        return min(runner_stop, entry_price - lock1_pips * pip_factor)
+    return runner_stop
 
 
 def _metadata(

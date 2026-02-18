@@ -74,6 +74,10 @@ def main() -> None:
         tp1_close_pct=args.tp1_close_pct,
         trail_drawdown_pct=args.trail_drawdown_pct,
         be_lock_pips=args.be_lock_pips,
+        profit_floor1_trigger_pips=settings.strategy_profit_floor1_trigger_pips,
+        profit_floor1_lock_pips=settings.strategy_profit_floor1_lock_pips,
+        profit_floor2_trigger_pips=settings.strategy_profit_floor2_trigger_pips,
+        profit_floor2_lock_pips=settings.strategy_profit_floor2_lock_pips,
         stoch_entry_mode=settings.strategy_stoch_entry_mode,
         use_stoch_exit=args.use_stoch_exit,
         st_rsi_len=settings.strategy_st_rsi_len,
@@ -241,6 +245,10 @@ def main() -> None:
             "tp1_close_pct": args.tp1_close_pct,
             "trail_drawdown_pct": args.trail_drawdown_pct,
             "be_lock_pips": args.be_lock_pips,
+            "profit_floor1_trigger_pips": settings.strategy_profit_floor1_trigger_pips,
+            "profit_floor1_lock_pips": settings.strategy_profit_floor1_lock_pips,
+            "profit_floor2_trigger_pips": settings.strategy_profit_floor2_trigger_pips,
+            "profit_floor2_lock_pips": settings.strategy_profit_floor2_lock_pips,
             "bar_fill_policy": args.bar_fill_policy,
             "use_runner": args.use_runner,
             "use_stoch_exit": args.use_stoch_exit,
@@ -788,6 +796,17 @@ def _run_backtest(
                         trail_candidate = long_peak * (1 - strategy_config.trail_drawdown_pct / 100)
                         be_stop = entry_price + strategy_config.be_lock_pips * pip_factor
                         runner_stop = max(be_stop, trail_candidate)
+                        runner_stop = _apply_profit_floor_stop(
+                            side=position_side,
+                            entry_price=entry_price,
+                            runner_stop=runner_stop,
+                            favorable_extreme=long_peak,
+                            pip_factor=pip_factor,
+                            trigger1_pips=strategy_config.profit_floor1_trigger_pips,
+                            lock1_pips=strategy_config.profit_floor1_lock_pips,
+                            trigger2_pips=strategy_config.profit_floor2_trigger_pips,
+                            lock2_pips=strategy_config.profit_floor2_lock_pips,
+                        )
                         if (
                             strategy_config.use_stoch_exit
                             and st_meta.get("stKxDn")
@@ -836,6 +855,17 @@ def _run_backtest(
                         trail_candidate = short_trough * (1 + strategy_config.trail_drawdown_pct / 100)
                         be_stop = entry_price - strategy_config.be_lock_pips * pip_factor
                         runner_stop = min(be_stop, trail_candidate)
+                        runner_stop = _apply_profit_floor_stop(
+                            side=position_side,
+                            entry_price=entry_price,
+                            runner_stop=runner_stop,
+                            favorable_extreme=short_trough,
+                            pip_factor=pip_factor,
+                            trigger1_pips=strategy_config.profit_floor1_trigger_pips,
+                            lock1_pips=strategy_config.profit_floor1_lock_pips,
+                            trigger2_pips=strategy_config.profit_floor2_trigger_pips,
+                            lock2_pips=strategy_config.profit_floor2_lock_pips,
+                        )
                         if (
                             strategy_config.use_stoch_exit
                             and st_meta.get("stKxUp")
@@ -1010,6 +1040,17 @@ def _run_backtest(
                     trail_candidate = long_peak * (1 - strategy_config.trail_drawdown_pct / 100)
                     be_stop = entry_price + strategy_config.be_lock_pips * pip_factor
                     runner_stop = max(be_stop, trail_candidate)
+                    runner_stop = _apply_profit_floor_stop(
+                        side=position_side,
+                        entry_price=entry_price,
+                        runner_stop=runner_stop,
+                        favorable_extreme=long_peak,
+                        pip_factor=pip_factor,
+                        trigger1_pips=strategy_config.profit_floor1_trigger_pips,
+                        lock1_pips=strategy_config.profit_floor1_lock_pips,
+                        trigger2_pips=strategy_config.profit_floor2_trigger_pips,
+                        lock2_pips=strategy_config.profit_floor2_lock_pips,
+                    )
                     if (
                         strategy_config.use_stoch_exit
                         and st_meta.get("stKxDn")
@@ -1060,6 +1101,17 @@ def _run_backtest(
                     trail_candidate = short_trough * (1 + strategy_config.trail_drawdown_pct / 100)
                     be_stop = entry_price - strategy_config.be_lock_pips * pip_factor
                     runner_stop = min(be_stop, trail_candidate)
+                    runner_stop = _apply_profit_floor_stop(
+                        side=position_side,
+                        entry_price=entry_price,
+                        runner_stop=runner_stop,
+                        favorable_extreme=short_trough,
+                        pip_factor=pip_factor,
+                        trigger1_pips=strategy_config.profit_floor1_trigger_pips,
+                        lock1_pips=strategy_config.profit_floor1_lock_pips,
+                        trigger2_pips=strategy_config.profit_floor2_trigger_pips,
+                        lock2_pips=strategy_config.profit_floor2_lock_pips,
+                    )
                     if (
                         strategy_config.use_stoch_exit
                         and st_meta.get("stKxUp")
@@ -1303,6 +1355,35 @@ def _tp1_sl_prices(side: str, avg_price: float, tp1_pips: int, sl_pips: int, pip
     if side == "LONG":
         return avg_price + tp1_pips * pip_factor, avg_price - sl_pips * pip_factor
     return avg_price - tp1_pips * pip_factor, avg_price + sl_pips * pip_factor
+
+
+def _apply_profit_floor_stop(
+    *,
+    side: str,
+    entry_price: float,
+    runner_stop: float,
+    favorable_extreme: float,
+    pip_factor: float,
+    trigger1_pips: int,
+    lock1_pips: int,
+    trigger2_pips: int,
+    lock2_pips: int,
+) -> float:
+    # Two-step floor: once price moves favorably by trigger pips, lock minimum profit.
+    if side == "LONG":
+        mfe_pips = (favorable_extreme - entry_price) / pip_factor
+        if trigger2_pips > 0 and mfe_pips >= trigger2_pips:
+            runner_stop = max(runner_stop, entry_price + lock2_pips * pip_factor)
+        elif trigger1_pips > 0 and mfe_pips >= trigger1_pips:
+            runner_stop = max(runner_stop, entry_price + lock1_pips * pip_factor)
+        return runner_stop
+
+    mfe_pips = (entry_price - favorable_extreme) / pip_factor
+    if trigger2_pips > 0 and mfe_pips >= trigger2_pips:
+        runner_stop = min(runner_stop, entry_price - lock2_pips * pip_factor)
+    elif trigger1_pips > 0 and mfe_pips >= trigger1_pips:
+        runner_stop = min(runner_stop, entry_price - lock1_pips * pip_factor)
+    return runner_stop
 
 
 def _tp1_hit(side: str, high: float, low: float, tp1_price: float) -> bool:

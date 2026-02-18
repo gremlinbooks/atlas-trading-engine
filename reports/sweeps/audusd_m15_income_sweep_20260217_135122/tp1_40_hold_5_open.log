@@ -1,0 +1,35 @@
+cache status: symbol=AUD_USD timeframe=M15 cached=471 missing_windows=0
+Backtest Config
+Execution profile     : tv_panel
+Entry timing          : close
+Entries close-only    : True
+Intrabar exits via M1 : False
+Magnifier             : OFF
+Magnifier policy      : n/a
+Bid/ask used          : False
+Spread effective      : 0.0
+Ambiguous policy      : conservative
+Parity debug          : False
+
+Entry timing: close
+Magnifier: OFF
+Standard OHLC: OFF
+Commission: 0
+Slippage: 0
+Backtest Summary
+Total trades: 29
+Win rate: 75.86%
+Avg win: 7.2157 USD
+Avg loss: -8.5000 USD
+Profit factor: 2.6680
+Total PnL: 99.2460 USD
+Total PnL (pips, weighted): 141.78
+Total PnL (pips, raw): 311.50
+Max drawdown: 26.2500 USD
+Sharpe (per trade): 2.0485
+Avg hold bars: 18.45
+TP1 hit rate: 31.82%
+Runner PnL: 33.6000 USD
+Ambiguous bars: 0
+Same-bar TP1+runner: 0
+Stopouts: 2

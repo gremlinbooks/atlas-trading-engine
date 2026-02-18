@@ -1,0 +1,54 @@
+{
+  "generated_at_utc": "20260217_135001",
+  "results": [],
+  "failures": [
+    {
+      "case_id": "tp1_30_hold_3_open",
+      "log": "/home/ctn/Desktop/oakbridgelabs/tradingbot/atlas-trading-engine/reports/sweeps/audusd_m15_income_sweep_20260217_135001/tp1_30_hold_3_open.log"
+    },
+    {
+      "case_id": "tp1_30_hold_3_block",
+      "log": "/home/ctn/Desktop/oakbridgelabs/tradingbot/atlas-trading-engine/reports/sweeps/audusd_m15_income_sweep_20260217_135001/tp1_30_hold_3_block.log"
+    },
+    {
+      "case_id": "tp1_30_hold_5_open",
+      "log": "/home/ctn/Desktop/oakbridgelabs/tradingbot/atlas-trading-engine/reports/sweeps/audusd_m15_income_sweep_20260217_135001/tp1_30_hold_5_open.log"
+    },
+    {
+      "case_id": "tp1_30_hold_5_block",
+      "log": "/home/ctn/Desktop/oakbridgelabs/tradingbot/atlas-trading-engine/reports/sweeps/audusd_m15_income_sweep_20260217_135001/tp1_30_hold_5_block.log"
+    },
+    {
+      "case_id": "tp1_40_hold_3_open",
+      "log": "/home/ctn/Desktop/oakbridgelabs/tradingbot/atlas-trading-engine/reports/sweeps/audusd_m15_income_sweep_20260217_135001/tp1_40_hold_3_open.log"
+    },
+    {
+      "case_id": "tp1_40_hold_3_block",
+      "log": "/home/ctn/Desktop/oakbridgelabs/tradingbot/atlas-trading-engine/reports/sweeps/audusd_m15_income_sweep_20260217_135001/tp1_40_hold_3_block.log"
+    },
+    {
+      "case_id": "tp1_40_hold_5_open",
+      "log": "/home/ctn/Desktop/oakbridgelabs/tradingbot/atlas-trading-engine/reports/sweeps/audusd_m15_income_sweep_20260217_135001/tp1_40_hold_5_open.log"
+    },
+    {
+      "case_id": "tp1_40_hold_5_block",
+      "log": "/home/ctn/Desktop/oakbridgelabs/tradingbot/atlas-trading-engine/reports/sweeps/audusd_m15_income_sweep_20260217_135001/tp1_40_hold_5_block.log"
+    },
+    {
+      "case_id": "tp1_50_hold_3_open",
+      "log": "/home/ctn/Desktop/oakbridgelabs/tradingbot/atlas-trading-engine/reports/sweeps/audusd_m15_income_sweep_20260217_135001/tp1_50_hold_3_open.log"
+    },
+    {
+      "case_id": "tp1_50_hold_3_block",
+      "log": "/home/ctn/Desktop/oakbridgelabs/tradingbot/atlas-trading-engine/reports/sweeps/audusd_m15_income_sweep_20260217_135001/tp1_50_hold_3_block.log"
+    },
+    {
+      "case_id": "tp1_50_hold_5_open",
+      "log": "/home/ctn/Desktop/oakbridgelabs/tradingbot/atlas-trading-engine/reports/sweeps/audusd_m15_income_sweep_20260217_135001/tp1_50_hold_5_open.log"
+    },
+    {
+      "case_id": "tp1_50_hold_5_block",
+      "log": "/home/ctn/Desktop/oakbridgelabs/tradingbot/atlas-trading-engine/reports/sweeps/audusd_m15_income_sweep_20260217_135001/tp1_50_hold_5_block.log"
+    }
+  ]
+}

@@ -46,6 +46,10 @@ class StrategyConfig:
     tp1_close_pct: int = 30
     trail_drawdown_pct: float = 2.0
     be_lock_pips: int = 20
+    profit_floor1_trigger_pips: int = 10
+    profit_floor1_lock_pips: int = 10
+    profit_floor2_trigger_pips: int = 15
+    profit_floor2_lock_pips: int = 15
     stoch_entry_mode: str = "Off"
     use_stoch_exit: bool = True
     st_rsi_len: int = 12

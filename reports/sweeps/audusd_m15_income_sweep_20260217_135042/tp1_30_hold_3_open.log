@@ -1,0 +1,3 @@
+Failed to fetch candles from OANDA. symbol=AUD_USD, timeframe=M1, window=2026-02-09->2026-02-09. Check internet/DNS access and OANDA API settings.
+cache status: symbol=AUD_USD timeframe=M15 cached=471 missing_windows=0
+cache status: symbol=AUD_USD timeframe=M1 cached=7041 missing_windows=8

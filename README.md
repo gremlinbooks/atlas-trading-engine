@@ -47,6 +47,10 @@ Strategy parameters (OakBridge v2 defaults shown in `.env.example`):
 - `STRATEGY_TP1_CLOSE_PCT`
 - `STRATEGY_TRAIL_DRAWDOWN_PCT`
 - `STRATEGY_BE_LOCK_PIPS`
+- `STRATEGY_PROFIT_FLOOR1_TRIGGER_PIPS`
+- `STRATEGY_PROFIT_FLOOR1_LOCK_PIPS`
+- `STRATEGY_PROFIT_FLOOR2_TRIGGER_PIPS`
+- `STRATEGY_PROFIT_FLOOR2_LOCK_PIPS`
 - `STRATEGY_STOCH_ENTRY_MODE` (`Off`, `ExtremesOnly`, `StrictFilter`)
 - `STRATEGY_USE_STOCH_EXIT`
 - `STRATEGY_ST_RSI_LEN`
@@ -98,6 +102,79 @@ Manual execution:
 curl -X POST http://localhost:8000/api/v1/execute \
   -H "Content-Type: application/json" \
   -d '{"symbol":"AUD_USD","side":"LONG","units":1000,"idempotency_key":"demo-1"}'
+```
+
+## Status Monitoring
+
+One-command dashboard (health + latest decision + latest execution):
+
+```bash
+bash -lc 'echo "=== HEALTH ==="; curl -s http://localhost:8000/api/v1/health | jq .; echo; echo "=== LAST DECISION ==="; python3 - <<'"'"'PY'"'"'
+import sqlite3
+con=sqlite3.connect("data/trades.db"); con.row_factory=sqlite3.Row
+r=con.execute("SELECT ts,symbol,candle_ts,signal,reason FROM decisions ORDER BY id DESC LIMIT 1").fetchone()
+print("no decisions found" if not r else f"{r['ts']} {r['symbol']} signal={r['signal']} reason={r['reason']} candle={r['candle_ts']}")
+PY
+echo; echo "=== LAST EXECUTION ==="; python3 - <<'"'"'PY'"'"'
+import sqlite3
+con=sqlite3.connect("data/trades.db"); con.row_factory=sqlite3.Row
+r=con.execute("SELECT created_at,symbol,side,units,status,reason,oanda_order_id,oanda_trade_id FROM trades ORDER BY id DESC LIMIT 1").fetchone()
+print("no executions found" if not r else f"{r['created_at']} {r['symbol']} {r['side']} units={r['units']} status={r['status']} reason={r['reason']} oanda_order_id={r['oanda_order_id']} oanda_trade_id={r['oanda_trade_id']}")
+PY'
+```
+
+Health endpoint:
+
+```bash
+curl -s http://localhost:8000/api/v1/health | jq
+```
+
+Latest strategy decisions (from SQLite ledger):
+
+```bash
+python3 - <<'PY'
+import sqlite3
+con = sqlite3.connect("data/trades.db")
+con.row_factory = sqlite3.Row
+rows = con.execute("""
+  SELECT ts, symbol, candle_ts, signal, reason, metadata_json
+  FROM decisions
+  ORDER BY id DESC
+  LIMIT 10
+""").fetchall()
+for r in rows:
+    print(f"{r['ts']} {r['symbol']} signal={r['signal']} reason={r['reason']} candle={r['candle_ts']}")
+PY
+```
+
+Latest executions/orders (from SQLite ledger):
+
+```bash
+python3 - <<'PY'
+import sqlite3
+con = sqlite3.connect("data/trades.db")
+con.row_factory = sqlite3.Row
+rows = con.execute("""
+  SELECT created_at, symbol, side, units, status, reason, oanda_order_id, oanda_trade_id
+  FROM trades
+  ORDER BY id DESC
+  LIMIT 20
+""").fetchall()
+for r in rows:
+    print(f"{r['created_at']} {r['symbol']} {r['side']} units={r['units']} status={r['status']} reason={r['reason']} oanda_order_id={r['oanda_order_id']} oanda_trade_id={r['oanda_trade_id']}")
+PY
+```
+
+Tail live decision log:
+
+```bash
+tail -n 50 logs/decision.jsonl
+```
+
+Tail live execution log:
+
+```bash
+tail -n 50 logs/execution.jsonl
 ```
 
 ## DRY_RUN Usage

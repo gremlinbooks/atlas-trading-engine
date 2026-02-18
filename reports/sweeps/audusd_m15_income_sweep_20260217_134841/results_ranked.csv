@@ -1,0 +1,1 @@
+rank,case_id,tp1_close_pct,min_hold_bars,block_session_enabled,block_session,from,to,total_trades,win_rate,profit_factor,total_pnl_usd,max_drawdown_pips,num_stopouts,runner_pnl_usd,tp1_hit_pct,worst_day_pnl_usd,best_day_pnl_usd,positive_days_pct,sharpe,score
