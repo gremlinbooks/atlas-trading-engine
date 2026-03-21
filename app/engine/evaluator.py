@@ -51,6 +51,12 @@ class Evaluator:
         self.error_state = error_state
         self._last_no_change_log: dict[str, str] = {}
         self._no_change_interval_seconds = _timeframe_to_seconds(self.settings.timeframe)
+        self._last_exit_inspect_ts: dict[str, str] = {}
+        self._exit_inspect_tf = self.settings.strategy_exit_inspect_tf.strip().upper()
+        self._exit_inspect_enabled = bool(
+            self._exit_inspect_tf and self._exit_inspect_tf != self.settings.timeframe.upper()
+        )
+        self._exit_inspect_candle_count = max(30, int(self.settings.strategy_exit_inspect_candle_count))
         self.strategy = get_strategy(self.settings.strategy_name)
         self.strategy_config = StrategyConfig(
             timeframe=self.settings.timeframe,
@@ -64,6 +70,9 @@ class Evaluator:
             force_flip=self.settings.strategy_force_flip,
             tp1_pips=self.settings.strategy_tp1_pips,
             sl_pips=self.settings.strategy_sl_pips,
+            max_hold_bars=self.settings.strategy_max_hold_bars,
+            drawdown_stop_pips=self.settings.strategy_drawdown_stop_pips,
+            drawdown_stop_bars=self.settings.strategy_drawdown_stop_bars,
             tp1_close_pct=self.settings.strategy_tp1_close_pct,
             trail_drawdown_pct=self.settings.strategy_trail_drawdown_pct,
             be_lock_pips=self.settings.strategy_be_lock_pips,
@@ -83,6 +92,19 @@ class Evaluator:
             st_tight_pips=self.settings.strategy_st_tight_pips,
             block_trades=self.settings.strategy_block_trades,
             block_session=self.settings.strategy_block_session,
+            block_entry_hours_utc=self.settings.strategy_block_entry_hours_utc,
+            no_intent_override_enabled=self.settings.strategy_no_intent_override_enabled,
+            no_intent_override_hours_utc=self.settings.strategy_no_intent_override_hours_utc,
+            no_intent_override_atr_mult=self.settings.strategy_no_intent_override_atr_mult,
+            no_intent_override_body_ratio_min=self.settings.strategy_no_intent_override_body_ratio_min,
+            no_intent_override_close_extreme_frac=self.settings.strategy_no_intent_override_close_extreme_frac,
+            no_intent_override_volume_lookback=self.settings.strategy_no_intent_override_volume_lookback,
+            no_intent_override_volume_percentile=self.settings.strategy_no_intent_override_volume_percentile,
+            no_intent_override_risk_scale=self.settings.strategy_no_intent_override_risk_scale,
+            hour_strict_mode_enabled=self.settings.strategy_hour_strict_mode_enabled,
+            hour_strict_hours_utc=self.settings.strategy_hour_strict_hours_utc,
+            hour_strict_require_cross_or_continuation=self.settings.strategy_hour_strict_require_cross_or_continuation,
+            hour_strict_risk_scale=self.settings.strategy_hour_strict_risk_scale,
             quick_relax=self.settings.strategy_quick_relax,
             use_day_mask=self.settings.strategy_use_day_mask,
             block_mon=self.settings.strategy_block_mon,
@@ -98,12 +120,19 @@ class Evaluator:
             hold_signal_bars=self.settings.strategy_hold_signal_bars,
             apply_on_history=self.settings.strategy_apply_on_history,
             pb_enabled=self.settings.strategy_pb_enabled,
+            pb_enabled_long=self.settings.strategy_pb_enabled_long,
+            pb_enabled_short=self.settings.strategy_pb_enabled_short,
             pb_lookback_bars=self.settings.strategy_pb_lookback_bars,
             cont_enabled=self.settings.strategy_cont_enabled,
             base_max_bars=self.settings.strategy_base_max_bars,
             base_max_range_atr=self.settings.strategy_base_max_range_atr,
+            rejoin_enabled=self.settings.strategy_rejoin_enabled,
+            rejoin_enabled_long=self.settings.strategy_rejoin_enabled_long,
+            rejoin_enabled_short=self.settings.strategy_rejoin_enabled_short,
             allow_second_chance=self.settings.strategy_allow_second_chance,
             reenter_within_bars=self.settings.strategy_reenter_within_bars,
+            early_loss_cut_pips=self.settings.strategy_early_loss_cut_pips,
+            momentum_fail_exit_pips=self.settings.strategy_momentum_fail_exit_pips,
         )
         self.strategy_state: dict[str, StrategyState] = {}
 
@@ -158,8 +187,66 @@ class Evaluator:
             log_event(system_logger, "candle_missing_time", symbol=symbol)
             return
 
+        position = get_position(symbol)
+        position_side = position["side"] if position and position["side"] else None
+        position_units = position["units"] if position and position["units"] else 0
+        position_trade_id = position["oanda_trade_id"] if position else None
+        state = self.strategy_state.get(symbol, StrategyState())
+        position_entry_ts = state.last_trade_candle_ts or (position["updated_at"] if position else None)
+        position_avg_price = position["avg_price"] if position else 0.0
+
+        spread_pips: float | None = None
+        spread_available = False
+        bid: float | None = None
+        ask: float | None = None
+        if pricing_available:
+            price = price_map.get(symbol)
+            if price:
+                bids = price.get("bids", [])
+                asks = price.get("asks", [])
+                if bids and asks:
+                    bid = float(bids[0]["price"])
+                    ask = float(asks[0]["price"])
+                    spread_pips = _calc_spread_pips(bid, ask, symbol)
+                    spread_available = True
+
+        if (
+            position_side in {"LONG", "SHORT"}
+            and self.settings.strategy_intrabar_loss_exit_enabled
+            and spread_available
+            and bid is not None
+            and ask is not None
+        ):
+            guard_exit = self._process_intrabar_loss_guard(
+                symbol=symbol,
+                position_side=position_side,
+                position_units=position_units,
+                position_avg_price=position_avg_price,
+                position_trade_id=position_trade_id,
+                spread_pips=spread_pips,
+                bid=bid,
+                ask=ask,
+            )
+            if guard_exit:
+                return
+
         last_processed = get_last_candle_ts(symbol)
         if last_processed and latest_ts <= last_processed:
+            if self._exit_inspect_enabled and position_side in {"LONG", "SHORT"}:
+                exit_decision = self._process_exit_inspection(
+                    symbol=symbol,
+                    position_side=position_side,
+                    position_units=position_units,
+                    position_avg_price=position_avg_price,
+                    position_entry_ts=position_entry_ts,
+                    position_trade_id=position_trade_id,
+                    spread_pips=spread_pips,
+                    spread_available=spread_available,
+                    bid=bid,
+                    ask=ask,
+                )
+                if exit_decision:
+                    return
             self._maybe_log_no_change(symbol, latest_ts)
             return
 
@@ -174,26 +261,23 @@ class Evaluator:
             )
             for c in candles
         ]
-        position = get_position(symbol)
-        position_side = position["side"] if position and position["side"] else None
-        position_units = position["units"] if position and position["units"] else 0
-        position_trade_id = position["oanda_trade_id"] if position else None
-        state = self.strategy_state.get(symbol, StrategyState())
-        position_entry_ts = state.last_trade_candle_ts or (position["updated_at"] if position else None)
-        position_avg_price = position["avg_price"] if position else 0.0
+        if self._exit_inspect_enabled and position_side in {"LONG", "SHORT"}:
+            exit_decision = self._process_exit_inspection(
+                symbol=symbol,
+                position_side=position_side,
+                position_units=position_units,
+                position_avg_price=position_avg_price,
+                position_entry_ts=position_entry_ts,
+                position_trade_id=position_trade_id,
+                spread_pips=spread_pips,
+                spread_available=spread_available,
+                bid=bid,
+                ask=ask,
+            )
+            if exit_decision:
+                return
+            state = self.strategy_state.get(symbol, state)
 
-        spread_pips: float | None = None
-        spread_available = False
-        if pricing_available:
-            price = price_map.get(symbol)
-            if price:
-                bids = price.get("bids", [])
-                asks = price.get("asks", [])
-                if bids and asks:
-                    bid = float(bids[0]["price"])
-                    ask = float(asks[0]["price"])
-                    spread_pips = _calc_spread_pips(bid, ask, symbol)
-                    spread_available = True
         decision = self.strategy.evaluate(
             candle_objs,
             StrategyContext(
@@ -234,6 +318,7 @@ class Evaluator:
         action = self._maybe_execute(
             symbol=symbol,
             candle_ts=latest_ts,
+            timeframe=self.settings.timeframe,
             signal=signal,
             action=action,
             position_trade_id=position_trade_id,
@@ -291,6 +376,245 @@ class Evaluator:
         if decision.next_state is not None:
             self.strategy_state[symbol] = decision.next_state
 
+    def _process_intrabar_loss_guard(
+        self,
+        *,
+        symbol: str,
+        position_side: str,
+        position_units: float,
+        position_avg_price: float,
+        position_trade_id: str | None,
+        spread_pips: float | None,
+        bid: float,
+        ask: float,
+    ) -> bool:
+        threshold = abs(float(self.settings.strategy_intrabar_loss_exit_pips))
+        if threshold <= 0:
+            return False
+        pip = _pip_factor(symbol)
+        if position_side == "LONG":
+            mark_price = bid
+            pnl_pips = (mark_price - position_avg_price) / pip
+        else:
+            mark_price = ask
+            pnl_pips = (position_avg_price - mark_price) / pip
+        if pnl_pips > -threshold:
+            return False
+
+        decision = StrategyDecision(
+            action="EXIT",
+            reason="intrabar loss guard",
+            metadata={
+                "intrabar_loss_guard": True,
+                "threshold_pips": threshold,
+                "pnl_pips": pnl_pips,
+                "mark_price": mark_price,
+                "position_avg_price": position_avg_price,
+            },
+            price=mark_price,
+        )
+        signal, reason, metadata = self._map_strategy_signal(decision)
+        metadata["execution_timeframe"] = "INTRABAR_GUARD"
+        metadata["bid"] = bid
+        metadata["ask"] = ask
+        action = self._map_execution_action(decision.action)
+        action = self._maybe_execute(
+            symbol=symbol,
+            candle_ts=_now_ts(),
+            timeframe="INTRABAR_GUARD",
+            signal=signal,
+            action=action,
+            position_trade_id=position_trade_id,
+            decision=decision,
+        )
+
+        computed_state = get_state(
+            symbol=symbol,
+            spread_pips=spread_pips if spread_pips is not None else 0.0,
+            position_side=position_side,
+            error_halt=self.error_state.get("halted", False),
+        )
+        ts = _now_ts()
+        insert_decision(
+            symbol=symbol,
+            state=computed_state,
+            spread_pips=spread_pips,
+            candle_ts=ts,
+            signal=signal,
+            reason=reason,
+            metadata={
+                **metadata,
+                "timeframe": "INTRABAR_GUARD",
+                "action": action,
+                "current_position_side": position_side,
+                "current_units": position_units,
+            },
+        )
+        log_event(
+            decision_logger,
+            "decision",
+            symbol=symbol,
+            candle_ts=ts,
+            timeframe="INTRABAR_GUARD",
+            signal=signal,
+            reason=reason,
+            state=computed_state,
+            action=action,
+            current_position_side=position_side,
+            current_units=position_units,
+            metadata={
+                **metadata,
+                "timeframe": "INTRABAR_GUARD",
+                "action": action,
+                "current_position_side": position_side,
+                "current_units": position_units,
+            },
+        )
+        return True
+
+    def _process_exit_inspection(
+        self,
+        *,
+        symbol: str,
+        position_side: str,
+        position_units: float,
+        position_avg_price: float,
+        position_entry_ts: str | None,
+        position_trade_id: str | None,
+        spread_pips: float | None,
+        spread_available: bool,
+        bid: float | None,
+        ask: float | None,
+    ) -> bool:
+        if not self._exit_inspect_enabled:
+            return False
+
+        try:
+            candles = self._get_candles_for_tf(
+                symbol=symbol,
+                timeframe=self._exit_inspect_tf,
+                count=self._exit_inspect_candle_count,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log_event(
+                system_logger,
+                "exit_inspect_candle_fetch_failed",
+                symbol=symbol,
+                timeframe=self._exit_inspect_tf,
+                error=str(exc),
+            )
+            return False
+
+        if len(candles) < 2:
+            return False
+        latest_candle = candles[-1]
+        latest_ts = latest_candle.get("time")
+        if not latest_ts:
+            return False
+        if self._last_exit_inspect_ts.get(symbol) == latest_ts:
+            return False
+
+        candle_objs = [
+            Candle(
+                ts=c["time"],
+                o=float(c["o"]),
+                h=float(c["h"]),
+                l=float(c["l"]),
+                c=float(c["c"]),
+                volume=int(c["volume"]),
+            )
+            for c in candles
+        ]
+        state = self.strategy_state.get(symbol, StrategyState())
+        decision = self.strategy.evaluate(
+            candle_objs,
+            StrategyContext(
+                symbol=symbol,
+                timeframe=self._exit_inspect_tf,
+                position=PositionState(
+                    side=position_side,
+                    units=position_units,
+                    avg_price=position_avg_price,
+                    entry_ts=position_entry_ts,
+                ),
+                config=self.strategy_config,
+                state=state,
+                bar_index=len(candle_objs) - 1,
+                spread_pips=spread_pips,
+                spread_available=spread_available,
+                is_realtime=True,
+                exit_only=True,
+            ),
+        )
+        self._last_exit_inspect_ts[symbol] = latest_ts
+        if decision.next_state is not None:
+            self.strategy_state[symbol] = decision.next_state
+
+        if decision.action not in {"EXIT", "PARTIAL_TP1"}:
+            return False
+
+        signal, reason, metadata = self._map_strategy_signal(decision)
+        metadata["exit_inspection"] = True
+        metadata["signal_timeframe"] = self.settings.timeframe
+        metadata["execution_timeframe"] = self._exit_inspect_tf
+        if spread_available:
+            metadata["bid"] = bid
+            metadata["ask"] = ask
+        if spread_pips is None and not self.settings.dry_run:
+            metadata["spread_unavailable"] = True
+        action = self._map_execution_action(decision.action)
+        action = self._maybe_execute(
+            symbol=symbol,
+            candle_ts=latest_ts,
+            timeframe=self._exit_inspect_tf,
+            signal=signal,
+            action=action,
+            position_trade_id=position_trade_id,
+            decision=decision,
+        )
+        computed_state = get_state(
+            symbol=symbol,
+            spread_pips=spread_pips if spread_pips is not None else 0.0,
+            position_side=position_side,
+            error_halt=self.error_state.get("halted", False),
+        )
+        insert_decision(
+            symbol=symbol,
+            state=computed_state,
+            spread_pips=spread_pips,
+            candle_ts=latest_ts,
+            signal=signal,
+            reason=reason,
+            metadata={
+                **metadata,
+                "timeframe": self._exit_inspect_tf,
+                "action": action,
+                "current_position_side": position_side,
+                "current_units": position_units,
+            },
+        )
+        log_event(
+            decision_logger,
+            "decision",
+            symbol=symbol,
+            candle_ts=latest_ts,
+            timeframe=self._exit_inspect_tf,
+            signal=signal,
+            reason=reason,
+            state=computed_state,
+            action=action,
+            current_position_side=position_side,
+            current_units=position_units,
+            metadata={
+                **metadata,
+                "timeframe": self._exit_inspect_tf,
+                "action": action,
+                "current_position_side": position_side,
+                "current_units": position_units,
+            },
+        )
+        return True
+
     def _map_strategy_signal(self, decision: StrategyDecision) -> tuple[str, str, dict[str, Any]]:
         action = decision.action
         reason = decision.reason
@@ -324,6 +648,7 @@ class Evaluator:
         *,
         symbol: str,
         candle_ts: str,
+        timeframe: str,
         signal: str,
         action: str,
         position_trade_id: Optional[str],
@@ -343,13 +668,15 @@ class Evaluator:
         if action not in {"ENTER", "FLIP", "EXIT"}:
             return action
 
-        idempotency_key = f"{symbol}:{candle_ts}"
+        idempotency_key = f"{symbol}:{timeframe}:{candle_ts}"
         existing = get_trade_intent_by_idempotency(idempotency_key)
         if existing:
             return "ALREADY_EXECUTED"
 
-        intent_id = f"{symbol}-{candle_ts}"
+        intent_id = f"{symbol}-{timeframe}-{candle_ts}"
         order_units_abs = self._resolve_order_units(symbol=symbol, signal=signal) if signal in {"LONG", "SHORT"} else 0
+        if signal in {"LONG", "SHORT"}:
+            order_units_abs = self._apply_decision_sizing(decision=decision, fallback_units=order_units_abs)
         insert_trade_intent(
             intent_id=intent_id,
             symbol=symbol,
@@ -420,6 +747,23 @@ class Evaluator:
         if margin_pct <= 0:
             return default_units
 
+    def _apply_decision_sizing(self, *, decision: StrategyDecision, fallback_units: int) -> int:
+        if decision.units is not None:
+            explicit_units = int(abs(decision.units))
+            if explicit_units > 0:
+                return explicit_units
+        metadata = decision.metadata if isinstance(decision.metadata, dict) else {}
+        multiplier_raw = metadata.get("entry_units_multiplier")
+        if multiplier_raw is None:
+            return fallback_units
+        try:
+            multiplier = float(multiplier_raw)
+        except (TypeError, ValueError):
+            return fallback_units
+        if multiplier <= 0:
+            return fallback_units
+        return max(1, int(round(fallback_units * multiplier)))
+
         client = self._get_client()
         try:
             summary = client.get_account_summary().get("account", {})
@@ -473,8 +817,15 @@ class Evaluator:
         return self.client
 
     def _get_candles(self, symbol: str) -> list[dict[str, Any]]:
+        return self._get_candles_for_tf(
+            symbol=symbol,
+            timeframe=self.settings.timeframe,
+            count=self.settings.candle_count,
+        )
+
+    def _get_candles_for_tf(self, *, symbol: str, timeframe: str, count: int) -> list[dict[str, Any]]:
         client = self._get_client()
-        return client.get_candles(symbol, self.settings.timeframe, self.settings.candle_count)
+        return client.get_candles(symbol, timeframe, count)
 
     def _maybe_log_no_change(self, symbol: str, last_seen_candle_ts: str) -> None:
         last_log_ts = self._last_no_change_log.get(symbol)

@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     strategy_force_flip: bool = Field(default=True, alias="STRATEGY_FORCE_FLIP")
     strategy_tp1_pips: int = Field(default=20, alias="STRATEGY_TP1_PIPS")
     strategy_sl_pips: int = Field(default=28, alias="STRATEGY_SL_PIPS")
+    strategy_max_hold_bars: int = Field(default=0, alias="STRATEGY_MAX_HOLD_BARS")
+    strategy_drawdown_stop_pips: float = Field(default=15.0, alias="STRATEGY_DRAWDOWN_STOP_PIPS")
+    strategy_drawdown_stop_bars: int = Field(default=0, alias="STRATEGY_DRAWDOWN_STOP_BARS")
     strategy_tp1_close_pct: int = Field(default=30, alias="STRATEGY_TP1_CLOSE_PCT")
     strategy_trail_drawdown_pct: float = Field(default=2.0, alias="STRATEGY_TRAIL_DRAWDOWN_PCT")
     strategy_be_lock_pips: int = Field(default=20, alias="STRATEGY_BE_LOCK_PIPS")
@@ -54,6 +57,31 @@ class Settings(BaseSettings):
     strategy_st_tight_pips: int = Field(default=6, alias="STRATEGY_ST_TIGHT_PIPS")
     strategy_block_trades: bool = Field(default=False, alias="STRATEGY_BLOCK_TRADES")
     strategy_block_session: str = Field(default="1500-2200", alias="STRATEGY_BLOCK_SESSION")
+    strategy_block_entry_hours_utc: str = Field(default="", alias="STRATEGY_BLOCK_ENTRY_HOURS_UTC")
+    strategy_no_intent_override_enabled: bool = Field(default=False, alias="STRATEGY_NO_INTENT_OVERRIDE_ENABLED")
+    strategy_no_intent_override_hours_utc: str = Field(default="6,7,11", alias="STRATEGY_NO_INTENT_OVERRIDE_HOURS_UTC")
+    strategy_no_intent_override_atr_mult: float = Field(default=1.6, alias="STRATEGY_NO_INTENT_OVERRIDE_ATR_MULT")
+    strategy_no_intent_override_body_ratio_min: float = Field(
+        default=0.7, alias="STRATEGY_NO_INTENT_OVERRIDE_BODY_RATIO_MIN"
+    )
+    strategy_no_intent_override_close_extreme_frac: float = Field(
+        default=0.2, alias="STRATEGY_NO_INTENT_OVERRIDE_CLOSE_EXTREME_FRAC"
+    )
+    strategy_no_intent_override_volume_lookback: int = Field(
+        default=20, alias="STRATEGY_NO_INTENT_OVERRIDE_VOLUME_LOOKBACK"
+    )
+    strategy_no_intent_override_volume_percentile: float = Field(
+        default=65.0, alias="STRATEGY_NO_INTENT_OVERRIDE_VOLUME_PERCENTILE"
+    )
+    strategy_no_intent_override_risk_scale: float = Field(
+        default=0.6, alias="STRATEGY_NO_INTENT_OVERRIDE_RISK_SCALE"
+    )
+    strategy_hour_strict_mode_enabled: bool = Field(default=False, alias="STRATEGY_HOUR_STRICT_MODE_ENABLED")
+    strategy_hour_strict_hours_utc: str = Field(default="6,7,11,20", alias="STRATEGY_HOUR_STRICT_HOURS_UTC")
+    strategy_hour_strict_require_cross_or_continuation: bool = Field(
+        default=True, alias="STRATEGY_HOUR_STRICT_REQUIRE_CROSS_OR_CONTINUATION"
+    )
+    strategy_hour_strict_risk_scale: float = Field(default=0.8, alias="STRATEGY_HOUR_STRICT_RISK_SCALE")
     strategy_quick_relax: bool = Field(default=False, alias="STRATEGY_QUICK_RELAX")
     strategy_use_day_mask: bool = Field(default=False, alias="STRATEGY_USE_DAY_MASK")
     strategy_block_mon: bool = Field(default=False, alias="STRATEGY_BLOCK_MON")
@@ -69,12 +97,25 @@ class Settings(BaseSettings):
     strategy_hold_signal_bars: int = Field(default=8, alias="STRATEGY_HOLD_SIGNAL_BARS")
     strategy_apply_on_history: bool = Field(default=False, alias="STRATEGY_APPLY_ON_HISTORY")
     strategy_pb_enabled: bool = Field(default=True, alias="STRATEGY_PB_ENABLED")
+    strategy_pb_enabled_long: bool = Field(default=True, alias="STRATEGY_PB_ENABLED_LONG")
+    strategy_pb_enabled_short: bool = Field(default=True, alias="STRATEGY_PB_ENABLED_SHORT")
     strategy_pb_lookback_bars: int = Field(default=8, alias="STRATEGY_PB_LOOKBACK_BARS")
     strategy_cont_enabled: bool = Field(default=True, alias="STRATEGY_CONT_ENABLED")
     strategy_base_max_bars: int = Field(default=5, alias="STRATEGY_BASE_MAX_BARS")
     strategy_base_max_range_atr: float = Field(default=0.6, alias="STRATEGY_BASE_MAX_RANGE_ATR")
+    strategy_rejoin_enabled: bool = Field(default=True, alias="STRATEGY_REJOIN_ENABLED")
+    strategy_rejoin_enabled_long: bool = Field(default=True, alias="STRATEGY_REJOIN_ENABLED_LONG")
+    strategy_rejoin_enabled_short: bool = Field(default=True, alias="STRATEGY_REJOIN_ENABLED_SHORT")
     strategy_allow_second_chance: bool = Field(default=True, alias="STRATEGY_ALLOW_SECOND_CHANCE")
     strategy_reenter_within_bars: int = Field(default=12, alias="STRATEGY_REENTER_WITHIN_BARS")
+    strategy_early_loss_cut_pips: float = Field(default=0.0, alias="STRATEGY_EARLY_LOSS_CUT_PIPS")
+    strategy_momentum_fail_exit_pips: float = Field(default=0.0, alias="STRATEGY_MOMENTUM_FAIL_EXIT_PIPS")
+    strategy_intrabar_loss_exit_enabled: bool = Field(
+        default=False, alias="STRATEGY_INTRABAR_LOSS_EXIT_ENABLED"
+    )
+    strategy_intrabar_loss_exit_pips: float = Field(default=28.0, alias="STRATEGY_INTRABAR_LOSS_EXIT_PIPS")
+    strategy_exit_inspect_tf: str = Field(default="", alias="STRATEGY_EXIT_INSPECT_TF")
+    strategy_exit_inspect_candle_count: int = Field(default=200, alias="STRATEGY_EXIT_INSPECT_CANDLE_COUNT")
 
     dry_run: bool = Field(default=True, alias="DRY_RUN")
     off_hours_enabled: bool = Field(default=False, alias="OFF_HOURS_ENABLED")
@@ -93,6 +134,58 @@ class Settings(BaseSettings):
             forced = self.force_signal.upper()
             if forced not in {"LONG", "SHORT", "HOLD"}:
                 raise ValueError("FORCE_SIGNAL must be LONG, SHORT, HOLD, or empty")
+        if self.strategy_block_entry_hours_utc.strip():
+            tokens = [t.strip() for t in self.strategy_block_entry_hours_utc.split(",") if t.strip()]
+            for token in tokens:
+                if not token.isdigit():
+                    raise ValueError(
+                        "STRATEGY_BLOCK_ENTRY_HOURS_UTC must be a comma-separated list of UTC hours (0-23)"
+                    )
+                hour = int(token)
+                if hour < 0 or hour > 23:
+                    raise ValueError(
+                        "STRATEGY_BLOCK_ENTRY_HOURS_UTC must be a comma-separated list of UTC hours (0-23)"
+                    )
+        if self.strategy_no_intent_override_hours_utc.strip():
+            tokens = [t.strip() for t in self.strategy_no_intent_override_hours_utc.split(",") if t.strip()]
+            for token in tokens:
+                if not token.isdigit():
+                    raise ValueError(
+                        "STRATEGY_NO_INTENT_OVERRIDE_HOURS_UTC must be a comma-separated list of UTC hours (0-23)"
+                    )
+                hour = int(token)
+                if hour < 0 or hour > 23:
+                    raise ValueError(
+                        "STRATEGY_NO_INTENT_OVERRIDE_HOURS_UTC must be a comma-separated list of UTC hours (0-23)"
+                    )
+        if self.strategy_no_intent_override_atr_mult <= 0:
+            raise ValueError("STRATEGY_NO_INTENT_OVERRIDE_ATR_MULT must be > 0")
+        if not (0.0 <= self.strategy_no_intent_override_body_ratio_min <= 1.0):
+            raise ValueError("STRATEGY_NO_INTENT_OVERRIDE_BODY_RATIO_MIN must be between 0 and 1")
+        if not (0.0 <= self.strategy_no_intent_override_close_extreme_frac <= 1.0):
+            raise ValueError("STRATEGY_NO_INTENT_OVERRIDE_CLOSE_EXTREME_FRAC must be between 0 and 1")
+        if self.strategy_no_intent_override_volume_lookback < 5:
+            raise ValueError("STRATEGY_NO_INTENT_OVERRIDE_VOLUME_LOOKBACK must be >= 5")
+        if not (0.0 <= self.strategy_no_intent_override_volume_percentile <= 100.0):
+            raise ValueError("STRATEGY_NO_INTENT_OVERRIDE_VOLUME_PERCENTILE must be between 0 and 100")
+        if not (0.0 < self.strategy_no_intent_override_risk_scale <= 1.0):
+            raise ValueError("STRATEGY_NO_INTENT_OVERRIDE_RISK_SCALE must be > 0 and <= 1")
+        if self.strategy_hour_strict_hours_utc.strip():
+            tokens = [t.strip() for t in self.strategy_hour_strict_hours_utc.split(",") if t.strip()]
+            for token in tokens:
+                if not token.isdigit():
+                    raise ValueError(
+                        "STRATEGY_HOUR_STRICT_HOURS_UTC must be a comma-separated list of UTC hours (0-23)"
+                    )
+                hour = int(token)
+                if hour < 0 or hour > 23:
+                    raise ValueError(
+                        "STRATEGY_HOUR_STRICT_HOURS_UTC must be a comma-separated list of UTC hours (0-23)"
+                    )
+        if not (0.0 < self.strategy_hour_strict_risk_scale <= 1.0):
+            raise ValueError("STRATEGY_HOUR_STRICT_RISK_SCALE must be > 0 and <= 1")
+        if self.strategy_intrabar_loss_exit_pips <= 0:
+            raise ValueError("STRATEGY_INTRABAR_LOSS_EXIT_PIPS must be > 0")
         if self.dry_run:
             return self
         if not self.oanda_api_key or not self.oanda_account_id or not self.oanda_env:

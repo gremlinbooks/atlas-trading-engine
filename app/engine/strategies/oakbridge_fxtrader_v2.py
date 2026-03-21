@@ -66,16 +66,44 @@ class OakBridgeFxTraderV2(Strategy):
 
         pullback_long = (
             ctx.config.pb_enabled
+            and ctx.config.pb_enabled_long
             and (last.c > slow_ema)
             and pulled_to_slow_l
             and recross_fast_l
         )
         pullback_short = (
             ctx.config.pb_enabled
+            and ctx.config.pb_enabled_short
             and (last.c < slow_ema)
             and pulled_to_slow_s
             and recross_fast_s
         )
+        rejoin_long = (
+            ctx.config.rejoin_enabled
+            and ctx.config.rejoin_enabled_long
+            and (last.c > slow_ema)
+            and (spread_ema > 0)
+            and recross_fast_l
+        )
+        rejoin_short = (
+            ctx.config.rejoin_enabled
+            and ctx.config.rejoin_enabled_short
+            and (last.c < slow_ema)
+            and (spread_ema < 0)
+            and recross_fast_s
+        )
+        long_components = {
+            "cross": long_signal_base,
+            "pullback": pullback_long,
+            "rejoin": rejoin_long,
+            "continuation": False,
+        }
+        short_components = {
+            "cross": short_signal_base,
+            "pullback": pullback_short,
+            "rejoin": rejoin_short,
+            "continuation": False,
+        }
 
         atr14 = (atr(candles, 14)[-1]) or 0.0
         # Continuation base must exclude the current bar; otherwise breakout checks are unreachable.
@@ -109,9 +137,11 @@ class OakBridgeFxTraderV2(Strategy):
             and (last.c < base_lo)
             and (last.c < slow_ema)
         )
+        long_components["continuation"] = cont_long
+        short_components["continuation"] = cont_short
 
-        long_intent = long_signal_base or pullback_long or cont_long
-        short_intent = short_signal_base or pullback_short or cont_short
+        long_intent = long_signal_base or pullback_long or rejoin_long or cont_long
+        short_intent = short_signal_base or pullback_short or rejoin_short or cont_short
 
         st_k, st_d, st_meta = _stoch_filters(closes, ctx)
         long_signal_ok, short_signal_ok = _apply_stoch_filter(
@@ -145,12 +175,13 @@ class OakBridgeFxTraderV2(Strategy):
                 short_tp1_done=False,
                 long_peak=None,
                 short_trough=None,
+                drawdown_bars=0,
             )
 
         state = _update_flat_state(state, flat, ctx.bar_index)
 
         decision = _handle_exits(candles, ctx, st_k, st_meta, state)
-        if decision.action != "HOLD":
+        if decision.action != "HOLD" or ctx.exit_only:
             return decision
 
         can_long = ok_time and ok_spread and long_signal_ok
@@ -176,12 +207,51 @@ class OakBridgeFxTraderV2(Strategy):
         both = can_long and can_short
         take_long = can_long and (not both or spread_ema > 0)
         take_short = can_short and (not both or spread_ema < 0)
+        no_intent_override = _compute_no_intent_override(
+            candles=candles,
+            ctx=ctx,
+            last=last,
+            atr14=atr14,
+            slow_ema=slow_ema,
+            spread_ema=spread_ema,
+            ok_time=ok_time,
+            ok_spread=ok_spread,
+            long_intent=long_intent,
+            short_intent=short_intent,
+            flat=flat,
+        )
+        override_long = bool(no_intent_override.get("allow_long", False))
+        override_short = bool(no_intent_override.get("allow_short", False))
+        hour_strict = _compute_hour_strict_gate(
+            ctx=ctx,
+            last_ts=last.ts,
+            long_components=long_components,
+            short_components=short_components,
+        )
+        if not bool(hour_strict.get("allow_long", True)):
+            can_long = False
+            take_long = False
+        if not bool(hour_strict.get("allow_short", True)):
+            can_short = False
+            take_short = False
 
         bars_since_entry = _bars_since_entry(candles, ctx.position.entry_ts)
         min_hold_ok = (
             ctx.position.side is None
             or bars_since_entry is None
             or bars_since_entry >= ctx.config.min_hold_bars
+        )
+        flip_long_ok = in_short and _can_flip_position(
+            ctx=ctx,
+            last_price=last.c,
+            target_side="LONG",
+            min_hold_ok=min_hold_ok,
+        )
+        flip_short_ok = in_long and _can_flip_position(
+            ctx=ctx,
+            last_price=last.c,
+            target_side="SHORT",
+            min_hold_ok=min_hold_ok,
         )
 
         second_chance_ok = (
@@ -190,17 +260,67 @@ class OakBridgeFxTraderV2(Strategy):
             and (ctx.bar_index - (state.last_flat_index or ctx.bar_index)) <= ctx.config.reenter_within_bars
         )
 
-        want_long = take_long and (flat or second_chance_ok or (in_short and min_hold_ok))
-        want_short = take_short and (flat or second_chance_ok or (in_long and min_hold_ok))
+        want_long = (take_long and (flat or second_chance_ok or flip_long_ok)) or override_long
+        want_short = (take_short and (flat or second_chance_ok or flip_short_ok)) or override_short
+        blocked_reasons: list[str] = []
+        if not long_intent and not short_intent:
+            if not override_long and not override_short:
+                blocked_reasons.append("no_intent")
+        else:
+            if not ok_time:
+                blocked_reasons.append("time_gate")
+            if not ok_spread:
+                blocked_reasons.append("spread_gate")
+            if (long_intent and not long_signal_ok) or (short_intent and not short_signal_ok):
+                blocked_reasons.append("stoch_filter")
+            if not flat and not (flip_long_ok or flip_short_ok):
+                blocked_reasons.append("position_lock")
+        entry_diag = {
+            "components": {
+                "long": long_components,
+                "short": short_components,
+            },
+            "intent": {"long": long_intent, "short": short_intent},
+            "signal_ok": {"long": long_signal_ok, "short": short_signal_ok},
+            "pending": {"long": pending_long, "short": pending_short},
+            "can": {"long": can_long, "short": can_short},
+            "take": {"long": take_long, "short": take_short},
+            "want": {"long": want_long, "short": want_short},
+            "flip_ok": {"long": flip_long_ok, "short": flip_short_ok},
+            "position": {"flat": flat, "in_long": in_long, "in_short": in_short},
+            "no_intent_override": no_intent_override,
+            "hour_strict": hour_strict,
+            "blocked_reasons": blocked_reasons,
+        }
 
         already_traded = state.last_trade_index == ctx.bar_index
         if not already_traded:
             if want_long:
                 action = "ENTER_LONG" if flat else "FLIP_LONG"
+                is_override_entry = override_long and not take_long
+                reason = "long override entry" if is_override_entry else "long entry"
+                metadata = _metadata(
+                    last,
+                    fast_ema,
+                    slow_ema,
+                    spread_ema,
+                    st_k,
+                    st_d,
+                    st_meta,
+                    ok_time,
+                    ok_spread,
+                    entry_diag=entry_diag,
+                )
+                if is_override_entry:
+                    metadata["entry_units_multiplier"] = float(
+                        no_intent_override.get("risk_scale", ctx.config.no_intent_override_risk_scale)
+                    )
+                elif bool(hour_strict.get("active", False)):
+                    metadata["entry_units_multiplier"] = float(hour_strict.get("risk_scale", 1.0))
                 return StrategyDecision(
                     action,
-                    "long entry",
-                    _metadata(last, fast_ema, slow_ema, spread_ema, st_k, st_d, st_meta, ok_time, ok_spread),
+                    reason,
+                    metadata,
                     next_state=replace(
                         state,
                         last_trade_candle_ts=last.ts,
@@ -215,14 +335,35 @@ class OakBridgeFxTraderV2(Strategy):
                         pend_short=False,
                         pend_long_age=0,
                         pend_short_age=0,
+                        drawdown_bars=0,
                     ),
                 )
             if want_short:
                 action = "ENTER_SHORT" if flat else "FLIP_SHORT"
+                is_override_entry = override_short and not take_short
+                reason = "short override entry" if is_override_entry else "short entry"
+                metadata = _metadata(
+                    last,
+                    fast_ema,
+                    slow_ema,
+                    spread_ema,
+                    st_k,
+                    st_d,
+                    st_meta,
+                    ok_time,
+                    ok_spread,
+                    entry_diag=entry_diag,
+                )
+                if is_override_entry:
+                    metadata["entry_units_multiplier"] = float(
+                        no_intent_override.get("risk_scale", ctx.config.no_intent_override_risk_scale)
+                    )
+                elif bool(hour_strict.get("active", False)):
+                    metadata["entry_units_multiplier"] = float(hour_strict.get("risk_scale", 1.0))
                 return StrategyDecision(
                     action,
-                    "short entry",
-                    _metadata(last, fast_ema, slow_ema, spread_ema, st_k, st_d, st_meta, ok_time, ok_spread),
+                    reason,
+                    metadata,
                     next_state=replace(
                         state,
                         last_trade_candle_ts=last.ts,
@@ -237,13 +378,28 @@ class OakBridgeFxTraderV2(Strategy):
                         pend_short=False,
                         pend_long_age=0,
                         pend_short_age=0,
+                        drawdown_bars=0,
                     ),
                 )
 
+        hold_reason = (
+            "no entry" if not blocked_reasons else f"no entry ({','.join(blocked_reasons)})"
+        )
         return StrategyDecision(
             "HOLD",
-            "no entry",
-            _metadata(last, fast_ema, slow_ema, spread_ema, st_k, st_d, st_meta, ok_time, ok_spread),
+            hold_reason,
+            _metadata(
+                last,
+                fast_ema,
+                slow_ema,
+                spread_ema,
+                st_k,
+                st_d,
+                st_meta,
+                ok_time,
+                ok_spread,
+                entry_diag=entry_diag,
+            ),
             next_state=state,
         )
 
@@ -273,11 +429,103 @@ def _handle_exits(
     short_tp1_done = state.short_tp1_done
     long_peak = state.long_peak
     short_trough = state.short_trough
+    drawdown_bars = state.drawdown_bars
+    bars_since_entry = _bars_since_entry(candles, ctx.position.entry_ts)
+    closes = [c.c for c in candles]
+    fast_series = ema(closes, ctx.config.fast_len)
+    slow_series = ema(closes, ctx.config.slow_len)
+    spread_ema = fast_series[-1] - slow_series[-1]
+
+    if ctx.config.max_hold_bars > 0 and bars_since_entry is not None and bars_since_entry >= ctx.config.max_hold_bars:
+        return StrategyDecision(
+            "EXIT",
+            "max hold stop",
+            {"bars_since_entry": bars_since_entry, "max_hold_bars": ctx.config.max_hold_bars},
+            price=last.c,
+            next_state=replace(
+                state,
+                long_tp1_reached=False,
+                short_tp1_reached=False,
+                long_tp1_done=False,
+                short_tp1_done=False,
+                long_peak=None,
+                short_trough=None,
+                drawdown_bars=0,
+            ),
+        )
 
     if ctx.position.side == "LONG":
         short_tp1_reached = False
         short_tp1_done = False
         short_trough = None
+        pnl_pips = (last.c - avg) / pip
+        early_loss_cut_pips = abs(ctx.config.early_loss_cut_pips)
+        if early_loss_cut_pips > 0 and pnl_pips <= -early_loss_cut_pips:
+            return StrategyDecision(
+                "EXIT",
+                "early loss cut",
+                {
+                    "pnl_pips": pnl_pips,
+                    "early_loss_cut_pips": ctx.config.early_loss_cut_pips,
+                },
+                price=last.c,
+                next_state=replace(
+                    state,
+                    long_tp1_reached=False,
+                    short_tp1_reached=False,
+                    long_tp1_done=False,
+                    short_tp1_done=False,
+                    long_peak=None,
+                    short_trough=None,
+                    drawdown_bars=0,
+                ),
+            )
+        momentum_fail_exit_pips = abs(ctx.config.momentum_fail_exit_pips)
+        if momentum_fail_exit_pips > 0 and spread_ema < 0 and pnl_pips <= -momentum_fail_exit_pips:
+            return StrategyDecision(
+                "EXIT",
+                "momentum fail stop",
+                {
+                    "pnl_pips": pnl_pips,
+                    "spread_ema": spread_ema,
+                    "momentum_fail_exit_pips": ctx.config.momentum_fail_exit_pips,
+                },
+                price=last.c,
+                next_state=replace(
+                    state,
+                    long_tp1_reached=False,
+                    short_tp1_reached=False,
+                    long_tp1_done=False,
+                    short_tp1_done=False,
+                    long_peak=None,
+                    short_trough=None,
+                    drawdown_bars=0,
+                ),
+            )
+        if ctx.config.drawdown_stop_bars > 0 and ctx.config.drawdown_stop_pips > 0:
+            drawdown_bars = drawdown_bars + 1 if pnl_pips <= -abs(ctx.config.drawdown_stop_pips) else 0
+            if drawdown_bars >= ctx.config.drawdown_stop_bars:
+                return StrategyDecision(
+                    "EXIT",
+                    "drawdown time stop",
+                    {
+                        "pnl_pips": pnl_pips,
+                        "drawdown_bars": drawdown_bars,
+                        "drawdown_stop_pips": ctx.config.drawdown_stop_pips,
+                        "drawdown_stop_bars": ctx.config.drawdown_stop_bars,
+                    },
+                    price=last.c,
+                    next_state=replace(
+                        state,
+                        long_tp1_reached=False,
+                        short_tp1_reached=False,
+                        long_tp1_done=False,
+                        short_tp1_done=False,
+                        long_peak=None,
+                        short_trough=None,
+                        drawdown_bars=0,
+                    ),
+                )
         if last.l <= long_sl and not long_tp1_done:
             return StrategyDecision(
                 "EXIT",
@@ -291,6 +539,7 @@ def _handle_exits(
                     short_tp1_reached=short_tp1_reached,
                     short_tp1_done=short_tp1_done,
                     short_trough=short_trough,
+                    drawdown_bars=0,
                 ),
             )
         if last.h >= long_tp1 and not long_tp1_done:
@@ -310,6 +559,7 @@ def _handle_exits(
                     short_tp1_reached=short_tp1_reached,
                     short_tp1_done=short_tp1_done,
                     short_trough=short_trough,
+                    drawdown_bars=0,
                 ),
             )
         if last.h >= long_tp1:
@@ -348,12 +598,81 @@ def _handle_exits(
                         short_tp1_done=False,
                         long_peak=None,
                         short_trough=None,
+                        drawdown_bars=0,
                     ),
                 )
     else:
         long_tp1_reached = False
         long_tp1_done = False
         long_peak = None
+        pnl_pips = (avg - last.c) / pip
+        early_loss_cut_pips = abs(ctx.config.early_loss_cut_pips)
+        if early_loss_cut_pips > 0 and pnl_pips <= -early_loss_cut_pips:
+            return StrategyDecision(
+                "EXIT",
+                "early loss cut",
+                {
+                    "pnl_pips": pnl_pips,
+                    "early_loss_cut_pips": ctx.config.early_loss_cut_pips,
+                },
+                price=last.c,
+                next_state=replace(
+                    state,
+                    long_tp1_reached=False,
+                    short_tp1_reached=False,
+                    long_tp1_done=False,
+                    short_tp1_done=False,
+                    long_peak=None,
+                    short_trough=None,
+                    drawdown_bars=0,
+                ),
+            )
+        momentum_fail_exit_pips = abs(ctx.config.momentum_fail_exit_pips)
+        if momentum_fail_exit_pips > 0 and spread_ema > 0 and pnl_pips <= -momentum_fail_exit_pips:
+            return StrategyDecision(
+                "EXIT",
+                "momentum fail stop",
+                {
+                    "pnl_pips": pnl_pips,
+                    "spread_ema": spread_ema,
+                    "momentum_fail_exit_pips": ctx.config.momentum_fail_exit_pips,
+                },
+                price=last.c,
+                next_state=replace(
+                    state,
+                    long_tp1_reached=False,
+                    short_tp1_reached=False,
+                    long_tp1_done=False,
+                    short_tp1_done=False,
+                    long_peak=None,
+                    short_trough=None,
+                    drawdown_bars=0,
+                ),
+            )
+        if ctx.config.drawdown_stop_bars > 0 and ctx.config.drawdown_stop_pips > 0:
+            drawdown_bars = drawdown_bars + 1 if pnl_pips <= -abs(ctx.config.drawdown_stop_pips) else 0
+            if drawdown_bars >= ctx.config.drawdown_stop_bars:
+                return StrategyDecision(
+                    "EXIT",
+                    "drawdown time stop",
+                    {
+                        "pnl_pips": pnl_pips,
+                        "drawdown_bars": drawdown_bars,
+                        "drawdown_stop_pips": ctx.config.drawdown_stop_pips,
+                        "drawdown_stop_bars": ctx.config.drawdown_stop_bars,
+                    },
+                    price=last.c,
+                    next_state=replace(
+                        state,
+                        long_tp1_reached=False,
+                        short_tp1_reached=False,
+                        long_tp1_done=False,
+                        short_tp1_done=False,
+                        long_peak=None,
+                        short_trough=None,
+                        drawdown_bars=0,
+                    ),
+                )
         if last.h >= short_sl and not short_tp1_done:
             return StrategyDecision(
                 "EXIT",
@@ -367,6 +686,7 @@ def _handle_exits(
                     long_tp1_reached=long_tp1_reached,
                     long_tp1_done=long_tp1_done,
                     long_peak=long_peak,
+                    drawdown_bars=0,
                 ),
             )
         if last.l <= short_tp1 and not short_tp1_done:
@@ -386,6 +706,7 @@ def _handle_exits(
                     long_tp1_reached=long_tp1_reached,
                     long_tp1_done=long_tp1_done,
                     long_peak=long_peak,
+                    drawdown_bars=0,
                 ),
             )
         if last.l <= short_tp1:
@@ -424,6 +745,7 @@ def _handle_exits(
                         short_tp1_done=False,
                         long_peak=None,
                         short_trough=None,
+                        drawdown_bars=0,
                     ),
                 )
 
@@ -439,6 +761,7 @@ def _handle_exits(
             short_tp1_done=short_tp1_done,
             long_peak=long_peak,
             short_trough=short_trough,
+            drawdown_bars=drawdown_bars,
         ),
     )
 
@@ -481,8 +804,9 @@ def _metadata(
     st_meta: dict[str, Any],
     ok_time: bool,
     ok_spread: bool,
+    entry_diag: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    out = {
         "fast_ema": fast_ema,
         "slow_ema": slow_ema,
         "spread_ema": spread_ema,
@@ -502,6 +826,9 @@ def _metadata(
             "volume": last.volume,
         },
     }
+    if entry_diag:
+        out["entry_diag"] = entry_diag
+    return out
 
 
 def _stoch_filters(
@@ -587,6 +914,8 @@ def _ok_time(ts: str, config) -> bool:
     if not config.block_trades:
         return True
     dt = _parse_iso_ts(ts).astimezone(timezone.utc)
+    if _is_hour_blocked(dt.hour, config.block_entry_hours_utc):
+        return False
     if config.use_day_mask:
         weekday = dt.weekday()
         day_blocked = {
@@ -700,6 +1029,151 @@ def _parse_hhmm(value: str) -> time:
     return time(int(hour), int(minute))
 
 
+def _is_hour_blocked(hour_utc: int, hour_list: str) -> bool:
+    return hour_utc in _parse_blocked_hours(hour_list)
+
+
+def _parse_blocked_hours(hour_list: str) -> set[int]:
+    blocked: set[int] = set()
+    for token in hour_list.split(","):
+        value = token.strip()
+        if not value:
+            continue
+        if not value.isdigit():
+            continue
+        hour = int(value)
+        if 0 <= hour <= 23:
+            blocked.add(hour)
+    return blocked
+
+
+def _compute_no_intent_override(
+    *,
+    candles: list[Candle],
+    ctx: StrategyContext,
+    last: Candle,
+    atr14: float,
+    slow_ema: float,
+    spread_ema: float,
+    ok_time: bool,
+    ok_spread: bool,
+    long_intent: bool,
+    short_intent: bool,
+    flat: bool,
+) -> dict[str, Any]:
+    risk_scale = max(0.01, min(1.0, float(ctx.config.no_intent_override_risk_scale)))
+    out: dict[str, Any] = {
+        "enabled": bool(ctx.config.no_intent_override_enabled),
+        "evaluated": False,
+        "allow_long": False,
+        "allow_short": False,
+        "risk_scale": risk_scale,
+    }
+    if not out["enabled"] or long_intent or short_intent or not flat:
+        return out
+
+    dt = _parse_iso_ts(last.ts).astimezone(timezone.utc)
+    hours = _parse_blocked_hours(ctx.config.no_intent_override_hours_utc)
+    hour_match = dt.hour in hours
+    out["evaluated"] = True
+    out["hour"] = dt.hour
+    out["hour_match"] = hour_match
+    out["ok_time"] = ok_time
+    out["ok_spread"] = ok_spread
+    if not hour_match or not ok_time or not ok_spread:
+        return out
+
+    bar_range = max(0.0, last.h - last.l)
+    if bar_range <= 0 or atr14 <= 0:
+        out["bar_range"] = bar_range
+        out["atr14"] = atr14
+        return out
+
+    atr_mult = bar_range / atr14
+    body_ratio = abs(last.c - last.o) / bar_range
+    close_pos = (last.c - last.l) / bar_range
+    close_extreme_frac = max(0.0, min(1.0, float(ctx.config.no_intent_override_close_extreme_frac)))
+    long_direction_ok = close_pos >= (1.0 - close_extreme_frac) and spread_ema > 0 and last.c > slow_ema
+    short_direction_ok = close_pos <= close_extreme_frac and spread_ema < 0 and last.c < slow_ema
+
+    lookback = max(5, int(ctx.config.no_intent_override_volume_lookback))
+    prior_volumes = [float(c.volume) for c in candles[-(lookback + 1) : -1]]
+    if not prior_volumes:
+        prior_volumes = [float(c.volume) for c in candles[:-1]]
+    vol_pct = max(0.0, min(100.0, float(ctx.config.no_intent_override_volume_percentile)))
+    vol_threshold = _percentile(prior_volumes, vol_pct) if prior_volumes else 0.0
+    volume_ok = float(last.volume) >= vol_threshold if vol_threshold > 0 else False
+
+    atr_mult_ok = atr_mult >= float(ctx.config.no_intent_override_atr_mult)
+    body_ratio_ok = body_ratio >= float(ctx.config.no_intent_override_body_ratio_min)
+    quality_ok = atr_mult_ok and body_ratio_ok and volume_ok
+
+    out.update(
+        {
+            "bar_range": bar_range,
+            "atr14": atr14,
+            "atr_mult": atr_mult,
+            "atr_mult_ok": atr_mult_ok,
+            "body_ratio": body_ratio,
+            "body_ratio_ok": body_ratio_ok,
+            "close_pos": close_pos,
+            "volume_last": float(last.volume),
+            "volume_threshold": vol_threshold,
+            "volume_ok": volume_ok,
+            "quality_ok": quality_ok,
+            "direction_ok": {"long": long_direction_ok, "short": short_direction_ok},
+        }
+    )
+    if not quality_ok:
+        return out
+    out["allow_long"] = bool(long_direction_ok)
+    out["allow_short"] = bool(short_direction_ok)
+    return out
+
+
+def _compute_hour_strict_gate(
+    *,
+    ctx: StrategyContext,
+    last_ts: str,
+    long_components: dict[str, bool],
+    short_components: dict[str, bool],
+) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "enabled": bool(ctx.config.hour_strict_mode_enabled),
+        "active": False,
+        "allow_long": True,
+        "allow_short": True,
+        "risk_scale": max(0.01, min(1.0, float(ctx.config.hour_strict_risk_scale))),
+    }
+    if not out["enabled"]:
+        return out
+    dt = _parse_iso_ts(last_ts).astimezone(timezone.utc)
+    strict_hours = _parse_blocked_hours(ctx.config.hour_strict_hours_utc)
+    out["hour"] = dt.hour
+    out["active"] = dt.hour in strict_hours
+    if not out["active"]:
+        return out
+
+    require_cross_or_cont = bool(ctx.config.hour_strict_require_cross_or_continuation)
+    if require_cross_or_cont:
+        out["allow_long"] = bool(long_components.get("cross")) or bool(long_components.get("continuation"))
+        out["allow_short"] = bool(short_components.get("cross")) or bool(short_components.get("continuation"))
+    return out
+
+
+def _percentile(values: list[float], pct: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return float(ordered[0])
+    rank = (max(0.0, min(100.0, pct)) / 100.0) * (len(ordered) - 1)
+    low = int(rank)
+    high = min(low + 1, len(ordered) - 1)
+    weight = rank - low
+    return float(ordered[low] * (1.0 - weight) + ordered[high] * weight)
+
+
 def _bars_since_entry(candles: list[Candle], entry_ts: str | None) -> int | None:
     if not entry_ts:
         return None
@@ -707,3 +1181,27 @@ def _bars_since_entry(candles: list[Candle], entry_ts: str | None) -> int | None
         if candle.ts == entry_ts:
             return len(candles) - 1 - index
     return None
+
+
+def _can_flip_position(
+    *,
+    ctx: StrategyContext,
+    last_price: float,
+    target_side: str,
+    min_hold_ok: bool,
+) -> bool:
+    if ctx.position.side is None or ctx.position.side == target_side or not ctx.config.force_flip:
+        return False
+    if min_hold_ok:
+        return True
+
+    threshold_pips = abs(ctx.config.drawdown_stop_pips)
+    if threshold_pips <= 0:
+        return False
+
+    pip = 0.01 if "JPY" in ctx.symbol.upper() else 0.0001
+    if ctx.position.side == "LONG":
+        adverse_pips = (ctx.position.avg_price - last_price) / pip
+    else:
+        adverse_pips = (last_price - ctx.position.avg_price) / pip
+    return adverse_pips >= threshold_pips

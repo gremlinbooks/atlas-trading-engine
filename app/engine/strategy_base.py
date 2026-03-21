@@ -43,6 +43,9 @@ class StrategyConfig:
     force_flip: bool = True
     tp1_pips: int = 20
     sl_pips: int = 28
+    max_hold_bars: int = 0
+    drawdown_stop_pips: float = 15.0
+    drawdown_stop_bars: int = 0
     tp1_close_pct: int = 30
     trail_drawdown_pct: float = 2.0
     be_lock_pips: int = 20
@@ -62,6 +65,19 @@ class StrategyConfig:
     st_tight_pips: int = 6
     block_trades: bool = False
     block_session: str = "1500-2200"
+    block_entry_hours_utc: str = ""
+    no_intent_override_enabled: bool = False
+    no_intent_override_hours_utc: str = "6,7,11"
+    no_intent_override_atr_mult: float = 1.6
+    no_intent_override_body_ratio_min: float = 0.7
+    no_intent_override_close_extreme_frac: float = 0.2
+    no_intent_override_volume_lookback: int = 20
+    no_intent_override_volume_percentile: float = 65.0
+    no_intent_override_risk_scale: float = 0.6
+    hour_strict_mode_enabled: bool = False
+    hour_strict_hours_utc: str = "6,7,11,20"
+    hour_strict_require_cross_or_continuation: bool = True
+    hour_strict_risk_scale: float = 0.8
     quick_relax: bool = False
     use_day_mask: bool = False
     block_mon: bool = False
@@ -77,12 +93,19 @@ class StrategyConfig:
     hold_signal_bars: int = 8
     apply_on_history: bool = False
     pb_enabled: bool = True
+    pb_enabled_long: bool = True
+    pb_enabled_short: bool = True
     pb_lookback_bars: int = 8
     cont_enabled: bool = True
     base_max_bars: int = 5
     base_max_range_atr: float = 0.6
+    rejoin_enabled: bool = True
+    rejoin_enabled_long: bool = True
+    rejoin_enabled_short: bool = True
     allow_second_chance: bool = True
     reenter_within_bars: int = 12
+    early_loss_cut_pips: float = 0.0
+    momentum_fail_exit_pips: float = 0.0
 
 
 class Strategy(ABC):
@@ -124,6 +147,7 @@ class StrategyState:
     pend_short: bool = False
     pend_long_age: int = 0
     pend_short_age: int = 0
+    drawdown_bars: int = 0
 
 
 @dataclass(frozen=True)
@@ -137,6 +161,7 @@ class StrategyContext:
     spread_pips: Optional[float] = None
     spread_available: bool = False
     is_realtime: bool = False
+    exit_only: bool = False
 
 
 @dataclass(frozen=True)

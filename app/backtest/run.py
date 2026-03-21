@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import math
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -42,12 +43,30 @@ class TradeResult:
     mae_pips: float
     equity: float
     hold_bars: int
+    entry_components: str = ""
 
 
 @dataclass
 class EquityPoint:
     ts: str
     equity: float
+
+
+@dataclass
+class CompoundedAuditRow:
+    entry_ts: str
+    exit_ts: str
+    side: str
+    leg: str
+    reason: str
+    base_units_opened: float
+    dynamic_units_opened: float
+    scale: float
+    base_pnl_usd: float
+    compounded_pnl_usd: float
+    balance_before: float
+    balance_after: float
+    liquidated: bool
 
 
 def main() -> None:
@@ -71,6 +90,9 @@ def main() -> None:
         force_flip=settings.strategy_force_flip,
         tp1_pips=args.tp1_pips,
         sl_pips=args.sl_pips,
+        max_hold_bars=settings.strategy_max_hold_bars,
+        drawdown_stop_pips=settings.strategy_drawdown_stop_pips,
+        drawdown_stop_bars=settings.strategy_drawdown_stop_bars,
         tp1_close_pct=args.tp1_close_pct,
         trail_drawdown_pct=args.trail_drawdown_pct,
         be_lock_pips=args.be_lock_pips,
@@ -90,6 +112,19 @@ def main() -> None:
         st_tight_pips=args.st_tight_pips,
         block_trades=settings.strategy_block_trades,
         block_session=settings.strategy_block_session,
+        block_entry_hours_utc=settings.strategy_block_entry_hours_utc,
+        no_intent_override_enabled=settings.strategy_no_intent_override_enabled,
+        no_intent_override_hours_utc=settings.strategy_no_intent_override_hours_utc,
+        no_intent_override_atr_mult=settings.strategy_no_intent_override_atr_mult,
+        no_intent_override_body_ratio_min=settings.strategy_no_intent_override_body_ratio_min,
+        no_intent_override_close_extreme_frac=settings.strategy_no_intent_override_close_extreme_frac,
+        no_intent_override_volume_lookback=settings.strategy_no_intent_override_volume_lookback,
+        no_intent_override_volume_percentile=settings.strategy_no_intent_override_volume_percentile,
+        no_intent_override_risk_scale=settings.strategy_no_intent_override_risk_scale,
+        hour_strict_mode_enabled=settings.strategy_hour_strict_mode_enabled,
+        hour_strict_hours_utc=settings.strategy_hour_strict_hours_utc,
+        hour_strict_require_cross_or_continuation=settings.strategy_hour_strict_require_cross_or_continuation,
+        hour_strict_risk_scale=settings.strategy_hour_strict_risk_scale,
         quick_relax=settings.strategy_quick_relax,
         use_day_mask=settings.strategy_use_day_mask,
         block_mon=settings.strategy_block_mon,
@@ -105,12 +140,19 @@ def main() -> None:
         hold_signal_bars=settings.strategy_hold_signal_bars,
         apply_on_history=settings.strategy_apply_on_history,
         pb_enabled=settings.strategy_pb_enabled,
+        pb_enabled_long=settings.strategy_pb_enabled_long,
+        pb_enabled_short=settings.strategy_pb_enabled_short,
         pb_lookback_bars=settings.strategy_pb_lookback_bars,
         cont_enabled=settings.strategy_cont_enabled,
         base_max_bars=settings.strategy_base_max_bars,
         base_max_range_atr=settings.strategy_base_max_range_atr,
+        rejoin_enabled=settings.strategy_rejoin_enabled,
+        rejoin_enabled_long=settings.strategy_rejoin_enabled_long,
+        rejoin_enabled_short=settings.strategy_rejoin_enabled_short,
         allow_second_chance=settings.strategy_allow_second_chance,
         reenter_within_bars=settings.strategy_reenter_within_bars,
+        early_loss_cut_pips=settings.strategy_early_loss_cut_pips,
+        momentum_fail_exit_pips=settings.strategy_momentum_fail_exit_pips,
     )
     from_dt, to_dt = _resolve_date_range(args.days, args.from_date, args.to_date)
     tv_panel_mode = args.exec_profile == "tv_panel"
@@ -135,6 +177,8 @@ def main() -> None:
     if args.exec_profile == "live_reality" and args.magnify_tf is None:
         if _timeframe_to_minutes(args.timeframe) >= 5:
             args.magnify_tf = "M1"
+    if args.compounding_start_balance is None:
+        args.compounding_start_balance = float(args.units)
 
     candles = _fetch_candles(
         client=client,
@@ -159,6 +203,21 @@ def main() -> None:
             cache=None if args.no_cache else CandleCache(Path(args.cache_db)),
             refresh_cache=args.refresh_cache,
         )
+    exit_inspect_tf = args.exit_inspect_tf.upper() if args.exit_inspect_tf else None
+    exit_inspect_candles: list[dict[str, Any]] | None = None
+    if exit_inspect_tf and exit_inspect_tf != args.timeframe.upper():
+        if args.magnify_tf and args.magnify_tf.upper() == exit_inspect_tf:
+            exit_inspect_candles = magnifier_candles
+        else:
+            exit_inspect_candles = _fetch_candles(
+                client=client,
+                symbol=args.symbol,
+                timeframe=exit_inspect_tf,
+                from_dt=from_dt,
+                to_dt=to_dt,
+                cache=None if args.no_cache else CandleCache(Path(args.cache_db)),
+                refresh_cache=args.refresh_cache,
+            )
 
     effective_fill = args.fill
     if args.entry_timing:
@@ -207,7 +266,19 @@ def main() -> None:
         tv_parity=args.tv_parity,
         exec_profile=args.exec_profile,
         use_bid_ask=use_bid_ask_effective,
+        exit_inspect_tf=exit_inspect_tf,
+        exit_inspect_candles=exit_inspect_candles,
     )
+    _propagate_entry_components(trades)
+    comp_metrics, compounded_equity_curve, compounded_audit = _compute_compounded_metrics(
+        trades=trades,
+        start_balance=float(args.compounding_start_balance),
+        participation=float(args.compounding_participation),
+        model=args.compounding_model,
+        leverage=float(args.compounding_leverage),
+        liquidation_floor=float(args.compounding_liquidation_floor),
+    )
+    metrics_extra.update(comp_metrics)
 
     metrics = _print_summary(trades, equity_curve, metrics_extra)
     if args.tv_parity:
@@ -255,11 +326,31 @@ def main() -> None:
             "st_tight_pips": args.st_tight_pips,
             "exec_profile": args.exec_profile,
             "magnifier": args.magnifier,
+            "exit_inspect_tf": args.exit_inspect_tf,
             "parity_debug": args.parity_debug,
             "cache_db": None if args.no_cache else args.cache_db,
             "refresh_cache": args.refresh_cache,
+            "no_intent_override_enabled": settings.strategy_no_intent_override_enabled,
+            "no_intent_override_hours_utc": settings.strategy_no_intent_override_hours_utc,
+            "no_intent_override_atr_mult": settings.strategy_no_intent_override_atr_mult,
+            "no_intent_override_body_ratio_min": settings.strategy_no_intent_override_body_ratio_min,
+            "no_intent_override_close_extreme_frac": settings.strategy_no_intent_override_close_extreme_frac,
+            "no_intent_override_volume_lookback": settings.strategy_no_intent_override_volume_lookback,
+            "no_intent_override_volume_percentile": settings.strategy_no_intent_override_volume_percentile,
+            "no_intent_override_risk_scale": settings.strategy_no_intent_override_risk_scale,
+            "hour_strict_mode_enabled": settings.strategy_hour_strict_mode_enabled,
+            "hour_strict_hours_utc": settings.strategy_hour_strict_hours_utc,
+            "hour_strict_require_cross_or_continuation": settings.strategy_hour_strict_require_cross_or_continuation,
+            "hour_strict_risk_scale": settings.strategy_hour_strict_risk_scale,
+            "compounding_participation": args.compounding_participation,
+            "compounding_start_balance": args.compounding_start_balance,
+            "compounding_model": args.compounding_model,
+            "compounding_leverage": args.compounding_leverage,
+            "compounding_liquidation_floor": args.compounding_liquidation_floor,
         },
         metrics=metrics,
+        compounded_equity=compounded_equity_curve,
+        compounded_audit=compounded_audit,
     )
     if args.parity_debug:
         _write_parity_debug(
@@ -304,6 +395,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--use_bid_ask", type=_parse_bool, default=True)
     parser.add_argument("--tv_parity", type=_parse_bool, default=False)
     parser.add_argument("--entry_timing", choices=["close", "intrabar"])
+    parser.add_argument("--exit_inspect_tf")
     parser.add_argument(
         "--exec_profile",
         choices=["tv_panel", "live_reality"],
@@ -313,6 +405,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--no_cache", action="store_true")
     parser.add_argument("--refresh_cache", action="store_true")
     parser.add_argument("--cache_db", default="data/candles_cache.db")
+    parser.add_argument("--compounding_model", choices=["notional", "margin"], default="notional")
+    parser.add_argument("--compounding_leverage", type=float, default=1.0)
+    parser.add_argument("--compounding_liquidation_floor", type=float, default=0.0)
+    parser.add_argument("--compounding_participation", type=float, default=0.95)
+    parser.add_argument("--compounding_start_balance", type=float)
     return parser.parse_args()
 
 
@@ -480,6 +577,8 @@ def _run_backtest(
     tv_parity: bool = False,
     exec_profile: str = "live_reality",
     use_bid_ask: bool = True,
+    exit_inspect_tf: str | None = None,
+    exit_inspect_candles: list[dict[str, Any]] | None = None,
 ) -> tuple[list[TradeResult], list[EquityPoint], dict[str, float]]:
     trades: list[TradeResult] = []
     equity_curve: list[EquityPoint] = []
@@ -520,6 +619,23 @@ def _run_backtest(
             magnifier_candles=magnifier_candles,
             timeframe=timeframe,
         )
+    exit_inspect_map: list[list[dict[str, Any]]] | None = None
+    if exit_inspect_tf and exit_inspect_tf != timeframe.upper():
+        if magnify_tf and magnify_tf.upper() == exit_inspect_tf and magnifier_map is not None:
+            exit_inspect_map = magnifier_map
+        elif exit_inspect_candles:
+            exit_inspect_map = _build_magnifier_map(
+                signal_candles=candles,
+                magnifier_candles=exit_inspect_candles,
+                timeframe=timeframe,
+            )
+    exit_inspect_series: list[Candle] = []
+    inspect_exit_reasons = {
+        "max hold stop",
+        "drawdown time stop",
+        "early loss cut",
+        "momentum fail stop",
+    }
 
     last_index = len(candles) - 1
     max_index = last_index if fill == "close" else last_index - 1
@@ -535,8 +651,9 @@ def _run_backtest(
                 entry_ts = pending_entry["entry_ts"]
                 entry_index = i
                 position_side = pending_entry["side"]
-                position_units_opened = float(units)
-                position_units_remaining = float(units)
+                entry_units = float(pending_entry.get("units", float(units)))
+                position_units_opened = entry_units
+                position_units_remaining = entry_units
                 tp1_reached = False
                 long_peak = None
                 short_trough = None
@@ -558,6 +675,7 @@ def _run_backtest(
                         mae_pips=0.0,
                         equity=balance,
                         hold_bars=0,
+                        entry_components=pending_entry.get("entry_components", ""),
                     )
                 )
                 if position_side == "LONG":
@@ -592,8 +710,9 @@ def _run_backtest(
                 entry_ts = pending_flip["entry_ts"]
                 entry_index = i
                 position_side = pending_flip["side"]
-                position_units_opened = float(units)
-                position_units_remaining = float(units)
+                entry_units = float(pending_flip.get("units", float(units)))
+                position_units_opened = entry_units
+                position_units_remaining = entry_units
                 tp1_reached = False
                 long_peak = None
                 short_trough = None
@@ -615,6 +734,7 @@ def _run_backtest(
                         mae_pips=0.0,
                         equity=balance,
                         hold_bars=0,
+                        entry_components=pending_flip.get("entry_components", ""),
                     )
                 )
                 if position_side == "LONG":
@@ -910,6 +1030,87 @@ def _run_backtest(
                             mae_pips = 0.0
                             break
 
+        if exit_inspect_map is not None:
+            exit_inspect_candles_for_bar = exit_inspect_map[i] if i < len(exit_inspect_map) else []
+            for inspect_candle in exit_inspect_candles_for_bar:
+                exit_inspect_series.append(
+                    Candle(
+                        ts=inspect_candle["time"],
+                        o=float(inspect_candle["o"]),
+                        h=float(inspect_candle["h"]),
+                        l=float(inspect_candle["l"]),
+                        c=float(inspect_candle["c"]),
+                        volume=int(inspect_candle["volume"]),
+                    )
+                )
+                if not position_side or entry_price is None:
+                    continue
+                inspect_decision = strategy.evaluate(
+                    exit_inspect_series,
+                    StrategyContext(
+                        symbol=symbol,
+                        timeframe=exit_inspect_tf or timeframe,
+                        position=PositionState(
+                            side=position_side,
+                            units=position_units_remaining,
+                            avg_price=entry_price,
+                            entry_ts=entry_ts,
+                        ),
+                        config=strategy_config,
+                        state=strategy_state,
+                        bar_index=len(exit_inspect_series) - 1,
+                        spread_pips=None,
+                        spread_available=False,
+                        is_realtime=False,
+                        exit_only=True,
+                    ),
+                )
+                if inspect_decision.next_state is not None:
+                    strategy_state = inspect_decision.next_state
+                if inspect_decision.action != "EXIT":
+                    continue
+                if inspect_decision.reason not in inspect_exit_reasons:
+                    continue
+                inspect_close = float(inspect_candle["c"])
+                exit_base_price = (
+                    inspect_decision.price if inspect_decision.price is not None else inspect_close
+                )
+                exit_price = (
+                    _exit_price(exit_base_price, position_side, spread_price)
+                    if use_bid_ask
+                    else exit_base_price
+                )
+                balance, trades = _record_exit(
+                    trades,
+                    equity_curve,
+                    balance,
+                    entry_ts,
+                    inspect_candle["time"],
+                    position_side,
+                    position_units_opened,
+                    position_units_remaining,
+                    entry_price,
+                    exit_price,
+                    "EXIT",
+                    f"EXIT_INSPECT_{inspect_decision.reason.upper().replace(' ', '_')}",
+                    pip_factor,
+                    mae_pips,
+                    i,
+                    entry_index,
+                )
+                if inspect_decision.reason in {"drawdown time stop", "early loss cut", "momentum fail stop"}:
+                    num_stopouts += 1
+                total_trades += 1
+                total_hold_bars += i - (entry_index or i)
+                position_side, entry_price, entry_ts, entry_index = None, None, None, None
+                position_units_opened = 0.0
+                position_units_remaining = 0.0
+                tp1_reached = False
+                long_peak = None
+                short_trough = None
+                mae_pips = 0.0
+                break
+
         if position_side and entry_price is not None:
             mae_pips = _update_mae(candle, entry_price, position_side, pip_factor, mae_pips)
 
@@ -1161,6 +1362,7 @@ def _run_backtest(
         if magnifier_map is not None:
             if signal and position_side is None and i + 1 <= max_index:
                 base_price, base_ts = _fill_price(candles, i, fill)
+                entry_units = _entry_units_for_decision(decision, units)
                 if use_bid_ask:
                     entry_price = _entry_price(base_price, signal, spread_price)
                 else:
@@ -1170,15 +1372,20 @@ def _run_backtest(
                     "entry_price": entry_price,
                     "entry_ts": base_ts,
                     "side": signal,
+                    "units": entry_units,
                     "reason": "ENTRY",
+                    "entry_components": _entry_components_for_signal(decision, signal),
                 }
             if signal and position_side and signal != position_side and i + 1 <= max_index:
                 base_price, base_ts = _fill_price(candles, i, fill)
+                entry_units = _entry_units_for_decision(decision, units)
                 pending_flip = {
                     "activate_index": i + 1,
                     "base_price": base_price,
                     "entry_ts": base_ts,
                     "side": signal,
+                    "units": entry_units,
+                    "entry_components": _entry_components_for_signal(decision, signal),
                 }
         elif signal and position_side is None:
             if tv_panel and last_entry_bar_ts == candle["time"]:
@@ -1186,8 +1393,9 @@ def _run_backtest(
             entry_price, entry_ts = _entry_fill(candles, i, fill, signal, spread_price, use_bid_ask)
             entry_index = i
             position_side = signal
-            position_units_opened = float(units)
-            position_units_remaining = float(units)
+            entry_units = _entry_units_for_decision(decision, units)
+            position_units_opened = entry_units
+            position_units_remaining = entry_units
             tp1_reached = False
             long_peak = None
             short_trough = None
@@ -1209,6 +1417,7 @@ def _run_backtest(
                     mae_pips=0.0,
                     equity=balance,
                     hold_bars=0,
+                    entry_components=_entry_components_for_signal(decision, signal),
                 )
             )
             if position_side == "LONG":
@@ -1245,8 +1454,9 @@ def _run_backtest(
             entry_price, entry_ts = _entry_fill(candles, i, fill, signal, spread_price, use_bid_ask)
             entry_index = i
             position_side = signal
-            position_units_opened = float(units)
-            position_units_remaining = float(units)
+            entry_units = _entry_units_for_decision(decision, units)
+            position_units_opened = entry_units
+            position_units_remaining = entry_units
             tp1_reached = False
             long_peak = None
             short_trough = None
@@ -1268,6 +1478,7 @@ def _run_backtest(
                     mae_pips=0.0,
                     equity=balance,
                     hold_bars=0,
+                    entry_components=_entry_components_for_signal(decision, signal),
                 )
             )
             if position_side == "LONG":
@@ -1299,6 +1510,55 @@ def _decision_signal(decision: StrategyDecision) -> Optional[str]:
     if decision.action in {"ENTER_SHORT", "FLIP_SHORT"}:
         return "SHORT"
     return None
+
+
+def _entry_units_for_decision(decision: StrategyDecision, default_units: int) -> float:
+    if decision.units is not None:
+        explicit_units = float(abs(decision.units))
+        if explicit_units > 0:
+            return explicit_units
+    metadata = decision.metadata if isinstance(decision.metadata, dict) else {}
+    multiplier_raw = metadata.get("entry_units_multiplier")
+    if multiplier_raw is None:
+        return float(default_units)
+    try:
+        multiplier = float(multiplier_raw)
+    except (TypeError, ValueError):
+        return float(default_units)
+    if multiplier <= 0:
+        return float(default_units)
+    return float(max(1.0, round(float(default_units) * multiplier)))
+
+
+def _entry_components_for_signal(decision: StrategyDecision, signal: str) -> str:
+    if not isinstance(decision.metadata, dict):
+        return ""
+    entry_diag = decision.metadata.get("entry_diag")
+    if not isinstance(entry_diag, dict):
+        return ""
+    components = entry_diag.get("components")
+    if not isinstance(components, dict):
+        return ""
+    side_key = "long" if signal == "LONG" else "short"
+    side_components = components.get(side_key)
+    if not isinstance(side_components, dict):
+        return ""
+    ordered = []
+    for key in ("cross", "pullback", "rejoin", "continuation"):
+        value = bool(side_components.get(key, False))
+        ordered.append(f"{key}={'1' if value else '0'}")
+    return ";".join(ordered)
+
+
+def _propagate_entry_components(trades: list[TradeResult]) -> None:
+    by_position: dict[tuple[str, str], str] = {}
+    for trade in trades:
+        if trade.leg == "ENTRY" and trade.entry_components:
+            by_position[(trade.entry_ts, trade.side)] = trade.entry_components
+    for trade in trades:
+        if trade.entry_components:
+            continue
+        trade.entry_components = by_position.get((trade.entry_ts, trade.side), "")
 
 
 def _entry_fill(
@@ -1478,6 +1738,145 @@ def _update_mae(
     return min(current_mae, adverse)
 
 
+def _compute_compounded_metrics(
+    *,
+    trades: list[TradeResult],
+    start_balance: float,
+    participation: float,
+    model: str,
+    leverage: float,
+    liquidation_floor: float,
+) -> tuple[dict[str, float], list[EquityPoint], list[CompoundedAuditRow]]:
+    if start_balance <= 0:
+        return (
+            {
+                "compounded_participation": participation,
+                "compounded_model_margin": 1.0 if model == "margin" else 0.0,
+                "compounded_leverage": leverage if model == "margin" else 1.0,
+                "compounded_start_balance_usd": 0.0,
+                "compounded_total_pnl_usd": 0.0,
+                "compounded_ending_balance_usd": 0.0,
+                "compounded_max_drawdown_usd": 0.0,
+                "compounded_first_entry_units": 0.0,
+                "compounded_liquidated": 0.0,
+            },
+            [],
+            [],
+        )
+
+    model = model.lower()
+    if model not in {"notional", "margin"}:
+        model = "notional"
+    participation = min(max(participation, 0.0), 1.0)
+    leverage = max(leverage, 0.0)
+    liquidation_floor = max(liquidation_floor, 0.0)
+    running_balance = start_balance
+    compounded_equity: list[EquityPoint] = []
+    compounded_audit: list[CompoundedAuditRow] = []
+    first_entry_units: float = 0.0
+    liquidated = False
+
+    active_entry_ts: str | None = None
+    active_side: str | None = None
+    active_units_opened: float = 0.0
+    active_entry_price: float = 0.0
+    active_scale: float = 0.0
+    active_dynamic_units_opened: float = 0.0
+
+    for trade in trades:
+        if trade.leg == "ENTRY":
+            if liquidated:
+                active_entry_ts = None
+                active_side = None
+                active_units_opened = 0.0
+                active_entry_price = 0.0
+                active_scale = 0.0
+                continue
+            active_entry_ts = trade.entry_ts
+            active_side = trade.side
+            active_units_opened = trade.units_opened
+            active_entry_price = trade.entry_price
+            if active_units_opened > 0 and active_entry_price > 0:
+                effective_leverage = leverage if model == "margin" else 1.0
+                dynamic_notional = running_balance * participation * effective_leverage
+                dynamic_units = dynamic_notional / active_entry_price
+                active_scale = dynamic_units / active_units_opened
+                active_dynamic_units_opened = dynamic_units
+                if first_entry_units == 0.0:
+                    first_entry_units = dynamic_units
+            else:
+                active_scale = 0.0
+                active_dynamic_units_opened = 0.0
+            continue
+
+        matches_active = (
+            active_entry_ts is not None
+            and trade.entry_ts == active_entry_ts
+            and active_side is not None
+            and trade.side == active_side
+        )
+        if not matches_active:
+            if trade.units_opened > 0 and trade.entry_price > 0:
+                effective_leverage = leverage if model == "margin" else 1.0
+                dynamic_notional = running_balance * participation * effective_leverage
+                dynamic_units = dynamic_notional / trade.entry_price
+                scale = dynamic_units / trade.units_opened
+                dynamic_units_opened = dynamic_units
+            else:
+                scale = 0.0
+                dynamic_units_opened = 0.0
+        else:
+            scale = active_scale
+            dynamic_units_opened = active_dynamic_units_opened
+
+        if liquidated:
+            continue
+
+        balance_before = running_balance
+        compounded_pnl = trade.pnl_usd * scale
+        running_balance += trade.pnl_usd * scale
+        if model == "margin" and running_balance <= liquidation_floor:
+            running_balance = liquidation_floor
+            liquidated = True
+        balance_after = running_balance
+        compounded_equity.append(EquityPoint(ts=trade.exit_ts, equity=running_balance))
+        compounded_audit.append(
+            CompoundedAuditRow(
+                entry_ts=trade.entry_ts,
+                exit_ts=trade.exit_ts,
+                side=trade.side,
+                leg=trade.leg,
+                reason=trade.reason,
+                base_units_opened=trade.units_opened,
+                dynamic_units_opened=dynamic_units_opened,
+                scale=scale,
+                base_pnl_usd=trade.pnl_usd,
+                compounded_pnl_usd=compounded_pnl,
+                balance_before=balance_before,
+                balance_after=balance_after,
+                liquidated=liquidated,
+            )
+        )
+
+    total_pnl = running_balance - start_balance
+    max_dd = _max_drawdown([p.equity for p in compounded_equity])
+    return (
+        {
+            "compounded_participation": participation,
+            "compounded_model_margin": 1.0 if model == "margin" else 0.0,
+            "compounded_leverage": leverage if model == "margin" else 1.0,
+            "compounded_start_balance_usd": start_balance,
+            "compounded_total_pnl_usd": total_pnl,
+            "compounded_ending_balance_usd": running_balance,
+            "compounded_max_drawdown_usd": max_dd,
+            "compounded_first_entry_units": first_entry_units,
+            "compounded_liquidated": 1.0 if liquidated else 0.0,
+        },
+        compounded_equity,
+        compounded_audit,
+    )
+
+
 def _print_summary(
     trades: list[TradeResult],
     equity: list[EquityPoint],
@@ -1519,6 +1918,31 @@ def _print_summary(
     print(f"Ambiguous bars: {extra.get('num_ambiguous_bars', 0):.0f}")
     print(f"Same-bar TP1+runner: {extra.get('num_same_bar_tp1_and_runner', 0):.0f}")
     print(f"Stopouts: {extra.get('num_stopouts', 0):.0f}")
+    if extra.get("compounded_start_balance_usd", 0.0) > 0:
+        comp_pct = extra.get("compounded_participation", 0.95) * 100
+        model_margin = extra.get("compounded_model_margin", 0.0) >= 0.5
+        model_label = "margin" if model_margin else "notional"
+        leverage = extra.get("compounded_leverage", 1.0)
+        sizing_label = f"{comp_pct:.0f}% {model_label}"
+        if model_margin:
+            sizing_label += f" @ {leverage:.2f}x"
+        print(
+            f"Compounded PnL ({sizing_label} sizing): "
+            f"{extra.get('compounded_total_pnl_usd', 0.0):.4f} USD"
+        )
+        print(
+            "Compounded ending balance: "
+            f"{extra.get('compounded_ending_balance_usd', 0.0):.4f} USD"
+        )
+        print(
+            "Compounded max drawdown: "
+            f"{extra.get('compounded_max_drawdown_usd', 0.0):.4f} USD"
+        )
+        first_units = extra.get("compounded_first_entry_units", 0.0)
+        if first_units > 0:
+            print(f"Compounded first-entry units: {first_units:.2f}")
+        if extra.get("compounded_liquidated", 0.0) >= 0.5:
+            print("Compounded status: LIQUIDATED (equity reached floor)")
 
     return {
         "total_trades": float(total),
@@ -1541,6 +1965,15 @@ def _print_summary(
         "entries_short": extra.get("entries_short", 0.0),
         "runner_exits": extra.get("runner_exits", 0.0),
         "tp1_hits": extra.get("tp1_hits", 0.0),
+        "compounded_participation": extra.get("compounded_participation", 0.0),
+        "compounded_model_margin": extra.get("compounded_model_margin", 0.0),
+        "compounded_leverage": extra.get("compounded_leverage", 1.0),
+        "compounded_start_balance_usd": extra.get("compounded_start_balance_usd", 0.0),
+        "compounded_total_pnl_usd": extra.get("compounded_total_pnl_usd", 0.0),
+        "compounded_ending_balance_usd": extra.get("compounded_ending_balance_usd", 0.0),
+        "compounded_max_drawdown_usd": extra.get("compounded_max_drawdown_usd", 0.0),
+        "compounded_first_entry_units": extra.get("compounded_first_entry_units", 0.0),
+        "compounded_liquidated": extra.get("compounded_liquidated", 0.0),
     }
 
 
@@ -1549,6 +1982,8 @@ def _write_reports(
     timeframe: str,
     trades: list[TradeResult],
     equity: list[EquityPoint],
+    compounded_equity: list[EquityPoint],
+    compounded_audit: list[CompoundedAuditRow],
     params: dict[str, Any],
     metrics: dict[str, float],
 ) -> None:
@@ -1576,6 +2011,7 @@ def _write_reports(
                 "mae_pips",
                 "equity",
                 "hold_bars",
+                "entry_components",
             ]
         )
         for trade in trades:
@@ -1596,6 +2032,7 @@ def _write_reports(
                     f"{trade.mae_pips:.2f}",
                     f"{trade.equity:.4f}",
                     trade.hold_bars,
+                    trade.entry_components,
                 ]
             )
 
@@ -1605,6 +2042,52 @@ def _write_reports(
         writer.writerow(["ts", "equity"])
         for point in equity:
             writer.writerow([point.ts, f"{point.equity:.4f}"])
+
+    compounded_equity_path = reports_dir / f"compounded_equity_{symbol}_{timeframe}_{date_tag}.csv"
+    with compounded_equity_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["ts", "equity"])
+        for point in compounded_equity:
+            writer.writerow([point.ts, f"{point.equity:.4f}"])
+
+    compounded_audit_path = reports_dir / f"compounded_audit_{symbol}_{timeframe}_{date_tag}.csv"
+    with compounded_audit_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            [
+                "entry_ts",
+                "exit_ts",
+                "side",
+                "leg",
+                "reason",
+                "base_units_opened",
+                "dynamic_units_opened",
+                "scale",
+                "base_pnl_usd",
+                "compounded_pnl_usd",
+                "balance_before",
+                "balance_after",
+                "liquidated",
+            ]
+        )
+        for row in compounded_audit:
+            writer.writerow(
+                [
+                    row.entry_ts,
+                    row.exit_ts,
+                    row.side,
+                    row.leg,
+                    row.reason,
+                    f"{row.base_units_opened:.4f}",
+                    f"{row.dynamic_units_opened:.4f}",
+                    f"{row.scale:.8f}",
+                    f"{row.base_pnl_usd:.6f}",
+                    f"{row.compounded_pnl_usd:.6f}",
+                    f"{row.balance_before:.6f}",
+                    f"{row.balance_after:.6f}",
+                    "1" if row.liquidated else "0",
+                ]
+            )
 
     summary_path = reports_dir / f"summary_{symbol}_{timeframe}_{date_tag}.json"
     with summary_path.open("w", encoding="utf-8") as handle:
@@ -1720,7 +2203,10 @@ def _format_date(dt: datetime) -> str:
 
 
 def _parse_candle_time(candle: dict[str, Any]) -> datetime:
-    return datetime.fromisoformat(candle["time"].replace("Z", "+00:00")).astimezone(timezone.utc)
+    token = candle["time"].replace("Z", "+00:00")
+    # Python 3.10 only supports up to 6 fractional-second digits.
+    token = re.sub(r"\.(\d{6})\d+(?=[+-]\d{2}:\d{2}$)", r".\1", token)
+    return datetime.fromisoformat(token).astimezone(timezone.utc)
 
 
 def _print_config_table(
