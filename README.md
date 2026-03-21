@@ -44,6 +44,9 @@ Strategy parameters (OakBridge v2 defaults shown in `.env.example`):
 - `STRATEGY_FORCE_FLIP`
 - `STRATEGY_TP1_PIPS`
 - `STRATEGY_SL_PIPS`
+- `STRATEGY_MAX_HOLD_BARS`
+- `STRATEGY_DRAWDOWN_STOP_PIPS`
+- `STRATEGY_DRAWDOWN_STOP_BARS`
 - `STRATEGY_TP1_CLOSE_PCT`
 - `STRATEGY_TRAIL_DRAWDOWN_PCT`
 - `STRATEGY_BE_LOCK_PIPS`
@@ -63,6 +66,7 @@ Strategy parameters (OakBridge v2 defaults shown in `.env.example`):
 - `STRATEGY_ST_TIGHT_PIPS`
 - `STRATEGY_BLOCK_TRADES`
 - `STRATEGY_BLOCK_SESSION` (UTC `HHMM-HHMM`)
+- `STRATEGY_BLOCK_ENTRY_HOURS_UTC` (comma-separated UTC hours, e.g. `6,7,11`)
 - `STRATEGY_QUICK_RELAX`
 - `STRATEGY_USE_DAY_MASK`
 - `STRATEGY_BLOCK_MON` through `STRATEGY_BLOCK_SUN`
@@ -72,12 +76,21 @@ Strategy parameters (OakBridge v2 defaults shown in `.env.example`):
 - `STRATEGY_HOLD_SIGNAL_BARS`
 - `STRATEGY_APPLY_ON_HISTORY`
 - `STRATEGY_PB_ENABLED`
+- `STRATEGY_PB_ENABLED_LONG`
+- `STRATEGY_PB_ENABLED_SHORT`
 - `STRATEGY_PB_LOOKBACK_BARS`
 - `STRATEGY_CONT_ENABLED`
 - `STRATEGY_BASE_MAX_BARS`
 - `STRATEGY_BASE_MAX_RANGE_ATR`
+- `STRATEGY_REJOIN_ENABLED`
+- `STRATEGY_REJOIN_ENABLED_LONG`
+- `STRATEGY_REJOIN_ENABLED_SHORT`
 - `STRATEGY_ALLOW_SECOND_CHANCE`
 - `STRATEGY_REENTER_WITHIN_BARS`
+- `STRATEGY_EARLY_LOSS_CUT_PIPS`
+- `STRATEGY_MOMENTUM_FAIL_EXIT_PIPS`
+- `STRATEGY_EXIT_INSPECT_TF` (example: `M1`, keeps signal timeframe unchanged and runs extra exit checks)
+- `STRATEGY_EXIT_INSPECT_CANDLE_COUNT`
 
 ## Running Locally
 
@@ -203,6 +216,7 @@ Optional fill model:
 Entry timing:
 - `--entry_timing close` forces bar-close entries (TradingView-like)
 - `--entry_timing intrabar` uses the fill model above
+- `--exit_inspect_tf M1` keeps entries on the main timeframe but evaluates strategy exits on M1 while a trade is open (requires M1 candles, typically with `--magnifier m1`)
 
 Notes:
 - Backtests assume mid-price candles with a configurable spread cost via `--spread_pips`.
@@ -267,6 +281,21 @@ Output:
 When `--with_candles=true`, diagnostics will fetch OANDA candles for the backtest window and include:
 - trend-aligned vs counter-trend entry performance (EMA-50 context)
 - performance by entry volatility regime (range percentile)
+
+Generate a compounded-position report from a backtest trades CSV:
+
+```bash
+python -m app.backtest.compound_report \
+  --trades_csv reports/backtest_trades_AUD_USD_M15_20260215.csv \
+  --starting_balance 250 \
+  --margin_usage_pct 95 \
+  --margin_rate 0.0333333333
+```
+
+Output:
+- `reports/compounded_trades_<SYMBOL>_<TF>_<RUNID>.csv`
+- `reports/compounded_equity_<SYMBOL>_<TF>_<RUNID>.csv`
+- `reports/compounded_summary_<SYMBOL>_<TF>_<RUNID>.json`
 
 ## Porting TradingView Strategies
 

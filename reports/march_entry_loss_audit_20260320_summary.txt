@@ -1,0 +1,63 @@
+March Entry-Loss Audit (from existing backtest trades)
+Input: reports/backtest_trades_AUD_USD_M15_20260320.csv
+Positions: 67
+Net PnL: -167.5800
+
+Top 10 worst positions:
+2026-03-02T20:00:00.000000000Z SHORT pnl=-60.2700 hr=20 reason=SL
+2026-03-03T06:45:00.000000000Z LONG pnl=-60.2700 hr=6 reason=SL
+2026-03-03T11:45:00.000000000Z LONG pnl=-60.2700 hr=11 reason=SL
+2026-03-04T06:00:00.000000000Z SHORT pnl=-60.2700 hr=6 reason=SL
+2026-03-04T08:15:00.000000000Z SHORT pnl=-60.2700 hr=8 reason=SL
+2026-03-05T06:45:00.000000000Z LONG pnl=-60.2700 hr=6 reason=SL
+2026-03-05T09:00:00.000000000Z LONG pnl=-60.2700 hr=9 reason=SL
+2026-03-05T14:45:00.000000000Z LONG pnl=-60.2700 hr=14 reason=SL
+2026-03-05T23:45:00.000000000Z SHORT pnl=-60.2700 hr=23 reason=SL
+2026-03-06T10:45:00.000000000Z LONG pnl=-60.2700 hr=10 reason=SL
+
+Loss concentration by entry hour UTC (sorted by net):
+hour=11 net=-178.1850 loss_sum=-224.4900 n=5 wins=1 losses=4 win_rate=20.0%
+hour=06 net=-132.6150 loss_sum=-197.1900 n=6 wins=2 losses=4 win_rate=33.3%
+hour=07 net=-120.5400 loss_sum=-120.5400 n=2 wins=0 losses=2 win_rate=0.0%
+hour=17 net=-68.2500 loss_sum=-160.8600 n=6 wins=2 losses=3 win_rate=33.3%
+hour=12 net=-60.2700 loss_sum=-60.2700 n=1 wins=0 losses=1 win_rate=0.0%
+hour=20 net=-55.0200 loss_sum=-60.2700 n=2 wins=1 losses=1 win_rate=50.0%
+hour=14 net=-34.5450 loss_sum=-80.8500 n=4 wins=1 losses=3 win_rate=25.0%
+hour=10 net=-24.6750 loss_sum=-70.9800 n=3 wins=1 losses=2 win_rate=33.3%
+hour=09 net=-13.9650 loss_sum=-60.2700 n=2 wins=1 losses=1 win_rate=50.0%
+hour=23 net=-13.9650 loss_sum=-60.2700 n=2 wins=1 losses=1 win_rate=50.0%
+hour=16 net=3.3600 loss_sum=0.0000 n=1 wins=1 losses=0 win_rate=100.0%
+hour=08 net=4.4100 loss_sum=-180.8100 n=7 wins=4 losses=3 win_rate=57.1%
+hour=18 net=16.6950 loss_sum=-32.9700 n=3 wins=2 losses=1 win_rate=66.7%
+hour=02 net=23.2050 loss_sum=-23.1000 n=2 wins=1 losses=1 win_rate=50.0%
+hour=05 net=24.3600 loss_sum=-68.2500 n=4 wins=2 losses=2 win_rate=50.0%
+hour=00 net=32.0250 loss_sum=-22.4700 n=3 wins=2 losses=1 win_rate=66.7%
+hour=03 net=46.3050 loss_sum=0.0000 n=1 wins=1 losses=0 win_rate=100.0%
+hour=19 net=46.3050 loss_sum=0.0000 n=1 wins=1 losses=0 win_rate=100.0%
+hour=13 net=46.3050 loss_sum=0.0000 n=1 wins=1 losses=0 win_rate=100.0%
+hour=21 net=78.6450 loss_sum=-60.2700 n=4 wins=3 losses=1 win_rate=75.0%
+hour=15 net=82.1100 loss_sum=-10.5000 n=3 wins=2 losses=1 win_rate=66.7%
+hour=01 net=130.7250 loss_sum=-8.1900 n=4 wins=3 losses=1 win_rate=75.0%
+
+Performance by dominant exit reason (sorted by net):
+reason=SL net=-1265.6700 n=21 wins=0 losses=21 win_rate=0.0%
+reason=FLIP net=-198.4500 n=17 wins=5 losses=12 win_rate=29.4%
+reason=NONE net=0.0000 n=1 wins=0 losses=0 win_rate=0.0%
+reason=TP1 net=1296.5400 n=28 wins=28 losses=0 win_rate=100.0%
+
+Worst hour+reason buckets (sorted by net):
+hour=06 reason=SL net=-180.8100 n=3
+hour=11 reason=SL net=-180.8100 n=3
+hour=08 reason=SL net=-180.8100 n=3
+hour=17 reason=SL net=-120.5400 n=2
+hour=07 reason=SL net=-120.5400 n=2
+hour=20 reason=SL net=-60.2700 n=1
+hour=09 reason=SL net=-60.2700 n=1
+hour=14 reason=SL net=-60.2700 n=1
+hour=23 reason=SL net=-60.2700 n=1
+hour=10 reason=SL net=-60.2700 n=1
+hour=21 reason=SL net=-60.2700 n=1
+hour=12 reason=SL net=-60.2700 n=1
+hour=05 reason=SL net=-60.2700 n=1
+hour=11 reason=FLIP net=-43.6800 n=1
+hour=17 reason=FLIP net=-40.3200 n=1

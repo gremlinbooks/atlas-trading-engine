@@ -1,0 +1,21 @@
+captured_utc=20260224_114732
+git_commit=da5a4f5
+git_status_porcelain:
+?? reports/ab_StocOff.txt
+?? reports/ab_extremesonly.txt
+?? reports/ab_strictfilter.txt
+?? reports/ab_strictfilter1.txt
+?? reports/backtest_trades_AUD_USD_M15_20260219.csv
+?? reports/backtest_trades_AUD_USD_M15_20260220.csv
+?? reports/backtest_trades_AUD_USD_M3_20260219.csv
+?? reports/backtest_trades_AUD_USD_M5_20260219.csv
+?? reports/config_snapshots/
+?? reports/diagnostics_AUD_USD_M15_20260220.json
+?? reports/equity_AUD_USD_M15_20260219.csv
+?? reports/equity_AUD_USD_M15_20260220.csv
+?? reports/equity_AUD_USD_M3_20260219.csv
+?? reports/equity_AUD_USD_M5_20260219.csv
+?? reports/summary_AUD_USD_M15_20260219.json
+?? reports/summary_AUD_USD_M15_20260220.json
+?? reports/summary_AUD_USD_M3_20260219.json
+?? reports/summary_AUD_USD_M5_20260219.json

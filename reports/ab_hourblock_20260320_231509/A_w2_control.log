@@ -1,0 +1,103 @@
+===== A_w2_control (2026-02-18 -> 2026-03-11) =====
+cache status: symbol=AUD_USD timeframe=M15 cached=1444 missing_windows=3
+fetching candles chunk: 2026-02-20 -> 2026-02-22 (n=0)
+fetching candles chunk: 2026-02-27 -> 2026-03-01 (n=0)
+fetching candles chunk: 2026-03-06 -> 2026-03-08 (n=0)
+cache status: symbol=AUD_USD timeframe=M1 cached=21537 missing_windows=62
+fetching candles chunk: 2026-02-18 -> 2026-02-18 (n=0)
+fetching candles chunk: 2026-02-18 -> 2026-02-18 (n=0)
+fetching candles chunk: 2026-02-18 -> 2026-02-18 (n=0)
+fetching candles chunk: 2026-02-18 -> 2026-02-18 (n=0)
+fetching candles chunk: 2026-02-18 -> 2026-02-18 (n=0)
+fetching candles chunk: 2026-02-18 -> 2026-02-18 (n=0)
+fetching candles chunk: 2026-02-18 -> 2026-02-18 (n=0)
+fetching candles chunk: 2026-02-18 -> 2026-02-18 (n=0)
+fetching candles chunk: 2026-02-18 -> 2026-02-18 (n=0)
+fetching candles chunk: 2026-02-19 -> 2026-02-19 (n=0)
+fetching candles chunk: 2026-02-19 -> 2026-02-19 (n=0)
+fetching candles chunk: 2026-02-19 -> 2026-02-19 (n=0)
+fetching candles chunk: 2026-02-20 -> 2026-02-20 (n=0)
+fetching candles chunk: 2026-02-20 -> 2026-02-22 (n=0)
+fetching candles chunk: 2026-02-22 -> 2026-02-22 (n=0)
+fetching candles chunk: 2026-02-23 -> 2026-02-23 (n=0)
+fetching candles chunk: 2026-02-23 -> 2026-02-23 (n=0)
+fetching candles chunk: 2026-02-23 -> 2026-02-23 (n=0)
+fetching candles chunk: 2026-02-23 -> 2026-02-23 (n=0)
+fetching candles chunk: 2026-02-23 -> 2026-02-23 (n=0)
+fetching candles chunk: 2026-02-23 -> 2026-02-23 (n=0)
+fetching candles chunk: 2026-02-24 -> 2026-02-24 (n=0)
+fetching candles chunk: 2026-02-24 -> 2026-02-24 (n=0)
+fetching candles chunk: 2026-02-24 -> 2026-02-24 (n=0)
+fetching candles chunk: 2026-02-24 -> 2026-02-24 (n=0)
+fetching candles chunk: 2026-02-24 -> 2026-02-24 (n=0)
+fetching candles chunk: 2026-02-24 -> 2026-02-24 (n=0)
+fetching candles chunk: 2026-02-25 -> 2026-02-25 (n=0)
+fetching candles chunk: 2026-02-25 -> 2026-02-25 (n=0)
+fetching candles chunk: 2026-02-25 -> 2026-02-25 (n=0)
+fetching candles chunk: 2026-02-25 -> 2026-02-25 (n=0)
+fetching candles chunk: 2026-02-25 -> 2026-02-25 (n=0)
+fetching candles chunk: 2026-02-25 -> 2026-02-25 (n=0)
+fetching candles chunk: 2026-02-26 -> 2026-02-26 (n=0)
+fetching candles chunk: 2026-02-26 -> 2026-02-26 (n=0)
+fetching candles chunk: 2026-02-26 -> 2026-02-26 (n=0)
+fetching candles chunk: 2026-02-26 -> 2026-02-26 (n=0)
+fetching candles chunk: 2026-02-27 -> 2026-03-01 (n=0)
+fetching candles chunk: 2026-03-02 -> 2026-03-02 (n=0)
+fetching candles chunk: 2026-03-02 -> 2026-03-02 (n=0)
+fetching candles chunk: 2026-03-03 -> 2026-03-03 (n=0)
+fetching candles chunk: 2026-03-03 -> 2026-03-03 (n=0)
+fetching candles chunk: 2026-03-04 -> 2026-03-04 (n=0)
+fetching candles chunk: 2026-03-04 -> 2026-03-04 (n=0)
+fetching candles chunk: 2026-03-04 -> 2026-03-04 (n=0)
+fetching candles chunk: 2026-03-04 -> 2026-03-04 (n=0)
+fetching candles chunk: 2026-03-05 -> 2026-03-05 (n=0)
+fetching candles chunk: 2026-03-05 -> 2026-03-05 (n=0)
+fetching candles chunk: 2026-03-05 -> 2026-03-05 (n=0)
+fetching candles chunk: 2026-03-05 -> 2026-03-05 (n=0)
+fetching candles chunk: 2026-03-05 -> 2026-03-05 (n=0)
+fetching candles chunk: 2026-03-06 -> 2026-03-08 (n=0)
+fetching candles chunk: 2026-03-08 -> 2026-03-08 (n=0)
+fetching candles chunk: 2026-03-08 -> 2026-03-08 (n=0)
+fetching candles chunk: 2026-03-09 -> 2026-03-09 (n=0)
+fetching candles chunk: 2026-03-09 -> 2026-03-09 (n=0)
+fetching candles chunk: 2026-03-09 -> 2026-03-09 (n=0)
+fetching candles chunk: 2026-03-09 -> 2026-03-09 (n=0)
+fetching candles chunk: 2026-03-10 -> 2026-03-10 (n=0)
+fetching candles chunk: 2026-03-10 -> 2026-03-10 (n=0)
+fetching candles chunk: 2026-03-10 -> 2026-03-10 (n=0)
+fetching candles chunk: 2026-03-10 -> 2026-03-10 (n=0)
+Backtest Config
+Execution profile     : live_reality
+Entry timing          : close
+Entries close-only    : True
+Intrabar exits via M1 : True
+Magnifier             : M1
+Magnifier policy      : conservative
+Bid/ask used          : True
+Spread effective      : 1.4
+Ambiguous policy      : conservative
+Parity debug          : False
+
+Backtest Summary
+Total trades: 103
+Win rate: 63.11%
+Avg win: 21.2213 USD
+Avg loss: -39.1429 USD
+Profit factor: 0.9274
+Total PnL: -108.0450 USD
+Total PnL (pips, weighted): -51.45
+Total PnL (pips, raw): 530.40
+Max drawdown: 662.8650 USD
+Sharpe (per trade): -0.3235
+Avg hold bars: 12.79
+TP1 hit rate: 35.53%
+Runner PnL: 757.7955 USD
+Ambiguous bars: 0
+Same-bar TP1+runner: 27
+Stopouts: 18
+Compounded PnL (95% notional sizing): -153.7566 USD
+Compounded ending balance: 20846.2434 USD
+Compounded max drawdown: 905.4111 USD
+Compounded first-entry units: 28206.25
+Magnifier TF: M1
+Magnifier Policy: conservative

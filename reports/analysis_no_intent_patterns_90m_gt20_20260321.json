@@ -1,0 +1,346 @@
+{
+  "cohort_counts": {
+    "all_distinct_opportunities": 195,
+    "missed_opportunities": 143,
+    "no_intent_missed_opportunities": 26,
+    "no_intent_share_of_missed_pct": 18.181818181818183
+  },
+  "time_of_day": {
+    "hour_counts_all": {
+      "14": 23,
+      "13": 18,
+      "15": 17,
+      "0": 15,
+      "1": 12,
+      "9": 11,
+      "7": 10,
+      "8": 9,
+      "11": 8,
+      "18": 8,
+      "22": 8,
+      "12": 7,
+      "2": 6,
+      "17": 6,
+      "19": 6,
+      "23": 6,
+      "5": 5,
+      "6": 5,
+      "16": 5,
+      "3": 3,
+      "4": 2,
+      "10": 2,
+      "20": 2,
+      "21": 1
+    },
+    "hour_counts_no_intent_missed": {
+      "0": 3,
+      "6": 3,
+      "15": 3,
+      "1": 2,
+      "2": 2,
+      "5": 2,
+      "11": 2,
+      "13": 2,
+      "22": 2,
+      "3": 1,
+      "9": 1,
+      "14": 1,
+      "18": 1,
+      "23": 1
+    },
+    "hour_lift_vs_all": [
+      {
+        "hour": 6,
+        "count_no_intent_missed": 3,
+        "share_no_intent_missed": 0.11538461538461539,
+        "share_all": 0.02564102564102564,
+        "lift": 4.5
+      },
+      {
+        "hour": 5,
+        "count_no_intent_missed": 2,
+        "share_no_intent_missed": 0.07692307692307693,
+        "share_all": 0.02564102564102564,
+        "lift": 3.0000000000000004
+      },
+      {
+        "hour": 2,
+        "count_no_intent_missed": 2,
+        "share_no_intent_missed": 0.07692307692307693,
+        "share_all": 0.03076923076923077,
+        "lift": 2.5
+      },
+      {
+        "hour": 3,
+        "count_no_intent_missed": 1,
+        "share_no_intent_missed": 0.038461538461538464,
+        "share_all": 0.015384615384615385,
+        "lift": 2.5
+      },
+      {
+        "hour": 11,
+        "count_no_intent_missed": 2,
+        "share_no_intent_missed": 0.07692307692307693,
+        "share_all": 0.041025641025641026,
+        "lift": 1.875
+      },
+      {
+        "hour": 22,
+        "count_no_intent_missed": 2,
+        "share_no_intent_missed": 0.07692307692307693,
+        "share_all": 0.041025641025641026,
+        "lift": 1.875
+      },
+      {
+        "hour": 0,
+        "count_no_intent_missed": 3,
+        "share_no_intent_missed": 0.11538461538461539,
+        "share_all": 0.07692307692307693,
+        "lift": 1.5
+      },
+      {
+        "hour": 15,
+        "count_no_intent_missed": 3,
+        "share_no_intent_missed": 0.11538461538461539,
+        "share_all": 0.08717948717948718,
+        "lift": 1.323529411764706
+      },
+      {
+        "hour": 1,
+        "count_no_intent_missed": 2,
+        "share_no_intent_missed": 0.07692307692307693,
+        "share_all": 0.06153846153846154,
+        "lift": 1.25
+      },
+      {
+        "hour": 23,
+        "count_no_intent_missed": 1,
+        "share_no_intent_missed": 0.038461538461538464,
+        "share_all": 0.03076923076923077,
+        "lift": 1.25
+      }
+    ]
+  },
+  "day_of_week": {
+    "weekday_counts_all": {
+      "Wed": 42,
+      "Thu": 42,
+      "Tue": 41,
+      "Fri": 34,
+      "Mon": 27,
+      "Sun": 9
+    },
+    "weekday_counts_no_intent_missed": {
+      "Thu": 10,
+      "Wed": 5,
+      "Fri": 4,
+      "Mon": 3,
+      "Tue": 3,
+      "Sun": 1
+    },
+    "weekday_lift_vs_all": [
+      {
+        "weekday": "Thu",
+        "count_no_intent_missed": 10,
+        "share_no_intent_missed": 0.38461538461538464,
+        "share_all": 0.2153846153846154,
+        "lift": 1.7857142857142858
+      },
+      {
+        "weekday": "Wed",
+        "count_no_intent_missed": 5,
+        "share_no_intent_missed": 0.19230769230769232,
+        "share_all": 0.2153846153846154,
+        "lift": 0.8928571428571429
+      },
+      {
+        "weekday": "Fri",
+        "count_no_intent_missed": 4,
+        "share_no_intent_missed": 0.15384615384615385,
+        "share_all": 0.17435897435897435,
+        "lift": 0.8823529411764707
+      },
+      {
+        "weekday": "Mon",
+        "count_no_intent_missed": 3,
+        "share_no_intent_missed": 0.11538461538461539,
+        "share_all": 0.13846153846153847,
+        "lift": 0.8333333333333334
+      },
+      {
+        "weekday": "Sun",
+        "count_no_intent_missed": 1,
+        "share_no_intent_missed": 0.038461538461538464,
+        "share_all": 0.046153846153846156,
+        "lift": 0.8333333333333334
+      },
+      {
+        "weekday": "Tue",
+        "count_no_intent_missed": 3,
+        "share_no_intent_missed": 0.11538461538461539,
+        "share_all": 0.21025641025641026,
+        "lift": 0.5487804878048781
+      }
+    ]
+  },
+  "volume": {
+    "sum_volume_m1_all": {
+      "n": 195,
+      "median": 10307.0,
+      "p25": 6778.0,
+      "p75": 14918.0,
+      "mean": 12276.83076923077
+    },
+    "sum_volume_m1_no_intent_missed": {
+      "n": 26,
+      "median": 6634.0,
+      "p25": 5751.75,
+      "p75": 11173.75,
+      "mean": 9114.23076923077
+    },
+    "sum_volume_m1_missed_all": {
+      "n": 143,
+      "median": 9186.0,
+      "p25": 6631.5,
+      "p75": 13543.0,
+      "mean": 11068.88111888112
+    }
+  },
+  "sample_no_intent_missed_top15_by_move": [
+    {
+      "start_ts": "2026-03-03T14:08:00Z",
+      "end_ts": "2026-03-03T15:38:00Z",
+      "direction": "DOWN",
+      "move_pips": 71.6,
+      "hour": 14,
+      "weekday": "Tue",
+      "sum_volume_m1": 34641
+    },
+    {
+      "start_ts": "2026-01-30T00:56:00Z",
+      "end_ts": "2026-01-30T02:26:00Z",
+      "direction": "DOWN",
+      "move_pips": 54.9,
+      "hour": 0,
+      "weekday": "Fri",
+      "sum_volume_m1": 17107
+    },
+    {
+      "start_ts": "2026-01-29T02:40:00Z",
+      "end_ts": "2026-01-29T04:10:00Z",
+      "direction": "UP",
+      "move_pips": 47.8,
+      "hour": 2,
+      "weekday": "Thu",
+      "sum_volume_m1": 7375
+    },
+    {
+      "start_ts": "2026-02-26T13:58:00Z",
+      "end_ts": "2026-02-26T15:28:00Z",
+      "direction": "DOWN",
+      "move_pips": 44.7,
+      "hour": 13,
+      "weekday": "Thu",
+      "sum_volume_m1": 16197
+    },
+    {
+      "start_ts": "2026-01-22T00:28:00Z",
+      "end_ts": "2026-01-22T01:58:00Z",
+      "direction": "UP",
+      "move_pips": 41.3,
+      "hour": 0,
+      "weekday": "Thu",
+      "sum_volume_m1": 8166
+    },
+    {
+      "start_ts": "2026-02-11T01:39:00Z",
+      "end_ts": "2026-02-11T03:09:00Z",
+      "direction": "UP",
+      "move_pips": 40.9,
+      "hour": 1,
+      "weekday": "Wed",
+      "sum_volume_m1": 5751
+    },
+    {
+      "start_ts": "2026-02-03T06:14:00Z",
+      "end_ts": "2026-02-03T07:44:00Z",
+      "direction": "UP",
+      "move_pips": 36.6,
+      "hour": 6,
+      "weekday": "Tue",
+      "sum_volume_m1": 9393
+    },
+    {
+      "start_ts": "2026-02-05T22:52:00Z",
+      "end_ts": "2026-02-06T00:22:00Z",
+      "direction": "DOWN",
+      "move_pips": 33.5,
+      "hour": 22,
+      "weekday": "Thu",
+      "sum_volume_m1": 5754
+    },
+    {
+      "start_ts": "2026-02-24T15:02:00Z",
+      "end_ts": "2026-02-24T16:32:00Z",
+      "direction": "UP",
+      "move_pips": 32.4,
+      "hour": 15,
+      "weekday": "Tue",
+      "sum_volume_m1": 11384
+    },
+    {
+      "start_ts": "2026-02-13T05:09:00Z",
+      "end_ts": "2026-02-13T06:39:00Z",
+      "direction": "DOWN",
+      "move_pips": 31.2,
+      "hour": 5,
+      "weekday": "Fri",
+      "sum_volume_m1": 6341
+    },
+    {
+      "start_ts": "2026-03-02T05:53:00Z",
+      "end_ts": "2026-03-02T07:23:00Z",
+      "direction": "DOWN",
+      "move_pips": 30.9,
+      "hour": 5,
+      "weekday": "Mon",
+      "sum_volume_m1": 11521
+    },
+    {
+      "start_ts": "2026-02-06T13:18:00Z",
+      "end_ts": "2026-02-06T14:48:00Z",
+      "direction": "UP",
+      "move_pips": 27.7,
+      "hour": 13,
+      "weekday": "Fri",
+      "sum_volume_m1": 10543
+    },
+    {
+      "start_ts": "2026-02-18T18:01:00Z",
+      "end_ts": "2026-02-18T19:31:00Z",
+      "direction": "DOWN",
+      "move_pips": 27.6,
+      "hour": 18,
+      "weekday": "Wed",
+      "sum_volume_m1": 5939
+    },
+    {
+      "start_ts": "2026-02-12T03:32:00Z",
+      "end_ts": "2026-02-12T05:02:00Z",
+      "direction": "DOWN",
+      "move_pips": 27.1,
+      "hour": 3,
+      "weekday": "Thu",
+      "sum_volume_m1": 4839
+    },
+    {
+      "start_ts": "2026-01-29T00:33:00Z",
+      "end_ts": "2026-01-29T02:03:00Z",
+      "direction": "DOWN",
+      "move_pips": 26.6,
+      "hour": 0,
+      "weekday": "Thu",
+      "sum_volume_m1": 8058
+    }
+  ]
+}

@@ -1,0 +1,155 @@
+{
+  "source_summary": "reports/summary_AUD_USD_M15_20260321.json",
+  "source_trades": "reports/backtest_trades_AUD_USD_M15_20260321.csv",
+  "symbol": "AUD_USD",
+  "window_minutes": 90,
+  "threshold_pips": 20.0,
+  "method": "strict wall-clock 90-minute window using M1 candles",
+  "from": "2026-01-01",
+  "to": "2026-03-11",
+  "candles_m1": 70244,
+  "entries_count": 215,
+  "raw_missed_windows": 9270,
+  "distinct_missed_windows": 201,
+  "distinct_up_count": 103,
+  "distinct_down_count": 98,
+  "distinct_up_avg_pips": 31.486407766990233,
+  "distinct_down_avg_pips": 31.189795918367373,
+  "top15": [
+    {
+      "rank": 1,
+      "start_ts": "2026-01-29T14:46:00Z",
+      "end_ts": "2026-01-29T16:16:00Z",
+      "direction": "DOWN",
+      "move_pips": 105.4,
+      "start_close": 0.70742,
+      "extreme": 0.69688
+    },
+    {
+      "rank": 2,
+      "start_ts": "2026-02-03T02:50:00Z",
+      "end_ts": "2026-02-03T04:20:00Z",
+      "direction": "UP",
+      "move_pips": 76.0,
+      "start_close": 0.69575,
+      "extreme": 0.70335
+    },
+    {
+      "rank": 3,
+      "start_ts": "2026-03-03T14:08:00Z",
+      "end_ts": "2026-03-03T15:38:00Z",
+      "direction": "DOWN",
+      "move_pips": 71.6,
+      "start_close": 0.7016,
+      "extreme": 0.69444
+    },
+    {
+      "rank": 4,
+      "start_ts": "2026-03-04T09:07:00Z",
+      "end_ts": "2026-03-04T10:37:00Z",
+      "direction": "UP",
+      "move_pips": 61.1,
+      "start_close": 0.70124,
+      "extreme": 0.70735
+    },
+    {
+      "rank": 5,
+      "start_ts": "2026-03-05T15:00:00Z",
+      "end_ts": "2026-03-05T16:30:00Z",
+      "direction": "DOWN",
+      "move_pips": 60.8,
+      "start_close": 0.70448,
+      "extreme": 0.6984
+    },
+    {
+      "rank": 6,
+      "start_ts": "2026-03-02T00:00:00Z",
+      "end_ts": "2026-03-02T01:30:00Z",
+      "direction": "UP",
+      "move_pips": 56.0,
+      "start_close": 0.70533,
+      "extreme": 0.71093
+    },
+    {
+      "rank": 7,
+      "start_ts": "2026-01-30T00:56:00Z",
+      "end_ts": "2026-01-30T02:26:00Z",
+      "direction": "DOWN",
+      "move_pips": 54.9,
+      "start_close": 0.70323,
+      "extreme": 0.69774
+    },
+    {
+      "rank": 8,
+      "start_ts": "2026-03-03T23:56:00Z",
+      "end_ts": "2026-03-04T01:26:00Z",
+      "direction": "DOWN",
+      "move_pips": 52.9,
+      "start_close": 0.70417,
+      "extreme": 0.69888
+    },
+    {
+      "rank": 9,
+      "start_ts": "2026-01-30T16:58:00Z",
+      "end_ts": "2026-01-30T18:28:00Z",
+      "direction": "DOWN",
+      "move_pips": 51.3,
+      "start_close": 0.69945,
+      "extreme": 0.69432
+    },
+    {
+      "rank": 10,
+      "start_ts": "2026-02-12T15:59:00Z",
+      "end_ts": "2026-02-12T17:29:00Z",
+      "direction": "DOWN",
+      "move_pips": 49.4,
+      "start_close": 0.71336,
+      "extreme": 0.70842
+    },
+    {
+      "rank": 11,
+      "start_ts": "2026-02-05T01:08:00Z",
+      "end_ts": "2026-02-05T02:38:00Z",
+      "direction": "DOWN",
+      "move_pips": 49.2,
+      "start_close": 0.70074,
+      "extreme": 0.69582
+    },
+    {
+      "rank": 12,
+      "start_ts": "2026-02-20T14:15:00Z",
+      "end_ts": "2026-02-20T15:45:00Z",
+      "direction": "UP",
+      "move_pips": 48.4,
+      "start_close": 0.70404,
+      "extreme": 0.70888
+    },
+    {
+      "rank": 13,
+      "start_ts": "2026-01-29T02:40:00Z",
+      "end_ts": "2026-01-29T04:10:00Z",
+      "direction": "UP",
+      "move_pips": 47.8,
+      "start_close": 0.70362,
+      "extreme": 0.7084
+    },
+    {
+      "rank": 14,
+      "start_ts": "2026-03-02T08:38:00Z",
+      "end_ts": "2026-03-02T10:08:00Z",
+      "direction": "UP",
+      "move_pips": 45.8,
+      "start_close": 0.7046,
+      "extreme": 0.70918
+    },
+    {
+      "rank": 15,
+      "start_ts": "2026-03-09T09:06:00Z",
+      "end_ts": "2026-03-09T10:36:00Z",
+      "direction": "UP",
+      "move_pips": 45.3,
+      "start_close": 0.69883,
+      "extreme": 0.70336
+    }
+  ]
+}
