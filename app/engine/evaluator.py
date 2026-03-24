@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 import re
 from typing import Any, Optional
 
+import requests
+
 from app.broker.oanda import OandaClient
 from app.config import get_settings
 from app.data.cursor import get_last_candle_ts, set_last_candle_ts
@@ -22,6 +24,7 @@ from app.ledger.trades import (
     get_position,
     get_trade_intent_by_idempotency,
     insert_trade_intent,
+    upsert_position,
     update_trade_intent,
 )
 from app.logging.logger import get_logger, log_event
@@ -691,25 +694,38 @@ class Evaluator:
         client = self._get_client()
         try:
             if action == "FLIP":
-                if not position_trade_id:
-                    log_event(
-                        execution_logger,
-                        "flip_missing_trade_id",
+                resolved_trade_id = self._resolve_position_trade_id(
+                    client=client,
+                    symbol=symbol,
+                    candle_ts=candle_ts,
+                    requested_trade_id=position_trade_id,
+                    action=action,
+                )
+                if resolved_trade_id:
+                    self._close_trade_with_retry(
+                        client=client,
                         symbol=symbol,
                         candle_ts=candle_ts,
+                        trade_id=resolved_trade_id,
+                        action=action,
                     )
-                    return "EXECUTION_FAILED"
-                client.close_trade(position_trade_id)
             if action == "EXIT":
-                if not position_trade_id:
-                    log_event(
-                        execution_logger,
-                        "exit_missing_trade_id",
-                        symbol=symbol,
-                        candle_ts=candle_ts,
-                    )
-                    return "EXECUTION_FAILED"
-                response = client.close_trade(position_trade_id)
+                resolved_trade_id = self._resolve_position_trade_id(
+                    client=client,
+                    symbol=symbol,
+                    candle_ts=candle_ts,
+                    requested_trade_id=position_trade_id,
+                    action=action,
+                )
+                if not resolved_trade_id:
+                    return "ALREADY_CLOSED"
+                response = self._close_trade_with_retry(
+                    client=client,
+                    symbol=symbol,
+                    candle_ts=candle_ts,
+                    trade_id=resolved_trade_id,
+                    action=action,
+                )
             else:
                 units = order_units_abs if signal == "LONG" else -abs(order_units_abs)
                 response = client.place_market_order(symbol, units)
@@ -740,6 +756,107 @@ class Evaluator:
             trade_id=trade_id,
         )
         return action
+
+    def _resolve_position_trade_id(
+        self,
+        *,
+        client: OandaClient,
+        symbol: str,
+        candle_ts: str,
+        requested_trade_id: str | None,
+        action: str,
+    ) -> str | None:
+        if requested_trade_id:
+            return requested_trade_id
+
+        refreshed_trade_id = self._refresh_position_from_broker(client=client, symbol=symbol)
+        if refreshed_trade_id:
+            log_event(
+                execution_logger,
+                "position_trade_id_refreshed",
+                symbol=symbol,
+                candle_ts=candle_ts,
+                action=action,
+                refreshed_trade_id=refreshed_trade_id,
+            )
+            return refreshed_trade_id
+
+        log_event(
+            execution_logger,
+            "position_trade_id_missing",
+            symbol=symbol,
+            candle_ts=candle_ts,
+            action=action,
+        )
+        return None
+
+    def _close_trade_with_retry(
+        self,
+        *,
+        client: OandaClient,
+        symbol: str,
+        candle_ts: str,
+        trade_id: str,
+        action: str,
+    ) -> dict[str, Any]:
+        try:
+            return client.close_trade(trade_id)
+        except requests.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            if status_code != 404:
+                raise
+
+            refreshed_trade_id = self._refresh_position_from_broker(client=client, symbol=symbol)
+            if refreshed_trade_id and refreshed_trade_id != trade_id:
+                log_event(
+                    execution_logger,
+                    "retry_close_with_refreshed_trade_id",
+                    symbol=symbol,
+                    candle_ts=candle_ts,
+                    action=action,
+                    stale_trade_id=trade_id,
+                    refreshed_trade_id=refreshed_trade_id,
+                )
+                return client.close_trade(refreshed_trade_id)
+
+            log_event(
+                execution_logger,
+                "close_trade_already_closed",
+                symbol=symbol,
+                candle_ts=candle_ts,
+                action=action,
+                stale_trade_id=trade_id,
+            )
+            return {}
+
+    def _refresh_position_from_broker(self, *, client: OandaClient, symbol: str) -> str | None:
+        open_trades = client.list_open_trades().get("trades", [])
+        matching_trade: dict[str, Any] | None = None
+        for trade in open_trades:
+            if trade.get("instrument") != symbol:
+                continue
+            matching_trade = trade
+            break
+
+        if not matching_trade:
+            upsert_position(
+                symbol=symbol,
+                side=None,
+                units=0,
+                avg_price=0,
+                oanda_trade_id=None,
+            )
+            return None
+
+        units = float(matching_trade.get("currentUnits", 0))
+        upsert_position(
+            symbol=symbol,
+            side="LONG" if units > 0 else "SHORT" if units < 0 else None,
+            units=abs(units),
+            avg_price=float(matching_trade.get("price", 0)),
+            oanda_trade_id=matching_trade.get("id"),
+        )
+        return matching_trade.get("id")
 
     def _resolve_order_units(self, *, symbol: str, signal: str) -> int:
         default_units = abs(int(self.settings.default_units))
